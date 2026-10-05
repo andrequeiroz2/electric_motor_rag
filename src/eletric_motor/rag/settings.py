@@ -21,3 +21,5 @@ class Settings(BaseSettings, frozen=True):
     dense_vector_name: str = "dense"
     sparse_vector_name: str = "sparse"
     dense_size: int = Field(default=DENSE_SIZE, ge=1)
+    # None: o onnxruntime usa todos os núcleos. Limite baixo mantém a máquina responsiva.
+    embedding_threads: int | None = Field(default=None, ge=1)

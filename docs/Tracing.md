@@ -67,6 +67,18 @@ Campos de contexto definidos hoje:
 | `dense_size` | Dimensão do vetor denso |
 | `dense_vector_name` | Nome do vetor denso |
 | `sparse_vector_name` | Nome do vetor esparso |
+| `document_id` | Identificador do documento ingerido |
+| `pages` | Páginas extraídas do PDF, `>= 1` |
+| `sections` | Seções reconhecidas no documento |
+| `chunks` | Chunks gerados do documento |
+| `points_written` | Pontos novos gravados na coleção |
+| `points_existing` | Pontos que já existiam na coleção |
+| `points_updated` | Pontos existentes com payload atualizado, sem reembedar |
+| `span` | Etapa da operação: `ingest`, `retrieve` ou `generate` |
+| `filters` | Filtros de payload aplicados na consulta |
+| `dense_hits` | Profundidade pedida ao braço denso |
+| `sparse_hits` | Profundidade pedida ao braço esparso |
+| `fused_hits` | Trechos devolvidos após a fusão RRF |
 | `latency_ms` | Inteiro, milissegundos de `perf_counter` |
 | `error_type` | `type(exc).__name__` |
 | `error_message` | Primeira linha do erro, no máximo 200 caracteres |
@@ -74,7 +86,7 @@ Campos de contexto definidos hoje:
 | `error_line` | Número da linha, `>= 1` |
 | `error_function` | Nome da função desse frame |
 
-`span`, `document_id`, `filters` e contagens de busca estão previstos para as fases de ingestão, consulta e resposta. `TraceContext` ainda não declara esses campos. Incluir um deles exige acrescentar o campo no modelo e neste documento.
+Campos de busca (`filters`, `dense_hits`, `sparse_hits`, `fused_hits`) e de resposta seguem a mesma regra: incluir um campo novo exige acrescentá-lo no modelo e neste documento.
 
 ## O que não entra na linha
 
@@ -149,11 +161,13 @@ Nome é contrato.
 | `collection.init.started` | Entrada da configuração da coleção |
 | `collection.ensured` | Coleção criada ou conferida, índices aplicados |
 | `collection.init.failed` | A mesma operação falhou |
-| `ingest.document.started` | Reservado para a fase de ingestão |
-| `ingest.document.completed` | Reservado para a fase de ingestão |
-| `ingest.document.failed` | Reservado para a fase de ingestão |
-| `retrieve.hybrid.completed` | Reservado para a fase de consulta |
-| `retrieve.hybrid.failed` | Reservado para a fase de consulta |
+| `ingest.document.started` | Entrada da ingestão de um PDF |
+| `ingest.document.chunked` | Documento cortado em chunks, com contagens |
+| `ingest.document.stored` | Chunks gravados na coleção, com contagens de pontos |
+| `ingest.document.completed` | PDF extraído, cortado e gravado |
+| `ingest.document.failed` | A ingestão do documento falhou |
+| `retrieve.hybrid.completed` | Consulta híbrida fundida, com contagens e latência |
+| `retrieve.hybrid.failed` | A consulta híbrida falhou |
 | `generate.answered` | Reservado para a fase de resposta |
 | `generate.failed` | Reservado para a fase de resposta |
 

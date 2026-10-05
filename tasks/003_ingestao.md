@@ -11,8 +11,8 @@ Cada fase nasce pendente. Ao terminar a implementação e a verificação descri
 | 1 | Extração do guia `50032749` | concluída |
 | 2 | Corte do guia `50032749` | concluída |
 | 3 | Gravação do guia `50032749` | concluída |
-| 4 | Pipeline completo do manual `50033244` | pendente |
-| 5 | Pipeline completo do catálogo `50025536` | pendente |
+| 4 | Pipeline completo do manual `50033244` | concluída |
+| 5 | Pipeline completo do catálogo `50025536` | concluída |
 
 O comando é `eletric-motor ingest CAMINHO`, ajuda em português, um PDF por invocação. Dado que cruza função é modelo Pydantic v2 congelado. Log com `trace_scope` e `log_event`: `ingest.document.started`, `ingest.document.completed` e `ingest.document.failed` no mesmo `trace_id`. O JSON não leva URL do Qdrant, texto integral do PDF nem texto integral de tabela.
 
@@ -44,6 +44,8 @@ O Docling perdeu células de tabelas grandes do guia na fase 1. Exemplo: a Tabel
 Avaliar na fase 3 ou 4, antes de gravar, se tratamos isso. Caminhos possíveis: ajustar o TableFormer (modo `accurate`), extrair tabelas críticas por ferramenta dedicada ou aceitar a perda e priorizar a prosa. Decisão e resultado ficam registrados aqui.
 
 **Decisão (fase 3)**: gravar como está. A prosa, que carrega a maior parte do conteúdo do guia, está íntegra; os chunks de tabela entram mesmo pobres. O tratamento das tabelas (TableFormer `accurate` ou extração dedicada) fica para a fase 4, antes do manual — se a solução mudar o Markdown extraído, o guia é reingerido e o `content_hash` novo cria pontos novos no lugar dos antigos.
+
+**Decisão (fase 4)**: a causa era o modo `accurate` do TableFormer, que é o default do Docling — o teste nas páginas 1 a 20 do guia mostrou o modo `fast` extraindo a Tabela 1.2 como grade 46×31 (884 células preenchidas) enquanto o `accurate` a reduzia a 2×2. O pipeline passou a fixar `TableFormerMode.FAST` em `ingest.py`. O guia foi reingerido: 191 pontos de prosa mantidos (hashes idênticos), 26 pontos de tabela substituídos. O `store.py` ganhou limpeza de pontos órfãos: após o upsert, pontos do mesmo `document_id` cujo id não está no lote atual são removidos, então a reingestão não deixa restos da extração anterior. No manual (170 tabelas) e no catálogo (grades de até 82×12) o modo `fast` perdeu no máximo 8 células por tabela.
 
 ## Fase 1 — Extração do guia
 
@@ -88,3 +90,10 @@ Verificação: existem pontos com `document_id` `weg-w22-catalogo-50025536`. Uma
 ## Critério de pronto desta task
 
 As cinco linhas da tabela de fases estão `concluída`. Os três `document_id` coexistem na coleção `eletric_motor`. Nenhum PDF foi commitado no Git.
+
+## Notas da execução das fases 4 e 5
+
+- **OOM no embedding do manual**: 535 chunks de tamanhos variados levaram o processo a 27 GB e o kernel o matou. Causa: a arena de memória do onnxruntime, que reserva blocos por formato de entrada e não devolve ao SO. Correção em `embeddings.py`: `enable_cpu_mem_arena=False` nos dois modelos (RSS estável em ~9 GB). O `store.py` passou a pular o embedding de pontos já existentes (reingestão de documento igual não roda o modelo) e a intercalar embedding e upsert por lote, o que também torna a gravação retomável após falha. Metadados de trechos inalterados são atualizados via `set_payload` (contado como `points_updated`), sem reembedar — foi o que aplicou a correção de hierarquia abaixo aos 142 pontos já gravados.
+- **Chunks idênticos colapsam**: trechos byte a byte iguais dentro do mesmo documento (tabelas numéricas repetidas entre blocos de idioma) têm o mesmo `content_hash` e viram um único ponto. Manual: 535 chunks → 533 pontos. Catálogo: 132 chunks → 129 pontos. Esperado e benigno.
+- **Caixa "8. Recomendações adicionais:"**: o manual tem uma caixa de referência cruzada cujo título parece seção numerada; o Docling a emite como `section_header` e ela roubava a hierarquia das seções 6.x. Filtrada por documento em `_FALSE_HEADERS` no `ingest.py` (PT e ES; o bloco EN não a emite como título).
+- **Processo não encerra após concluir**: o `ingest` imprime o resultado mas o processo permanece vivo (threads nativas do Docling/onnxruntime não encerram). O resultado já está gravado quando a frase sai; matar o processo é seguro. Correção fica para uma fase futura.

@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Literal
 
 import tiktoken
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langdetect import DetectorFactory, detect
+from langdetect.lang_detect_exception import LangDetectException
 from pydantic import BaseModel, ConfigDict, Field
 
 from eletric_motor.rag.trace import (
@@ -32,13 +34,19 @@ Topic = Literal["fundamentos", "dimensionamento", "calculos", "instalacao", "par
 
 # Palavras-chave do título da seção que indicam o tópico, em ordem de prioridade.
 _TOPIC_KEYWORDS: tuple[tuple[Topic, tuple[str, ...]], ...] = (
-    ("partida", ("partida", "acelera")),
-    ("instalacao", ("instala", "montagem", "ambiente", "ambiental")),
+    ("partida", ("partida", "acelera", "starting", "arranque")),
+    ("instalacao", ("instala", "installation", "montagem", "mounting", "ambiente", "ambiental")),
     ("dimensionamento", ("dimensionamento", "seleção", "aplicação")),
     ("fundamentos", ("fundament",)),
     ("calculos", ("cálculo", "calculo")),
     ("normas", ("norma",)),
 )
+
+# O langdetect é randômico sem seed; o idioma precisa ser estável entre reingestões.
+DetectorFactory.seed = 0
+_LANGUAGE_MAP = {"pt": "pt-BR", "en": "en", "es": "es"}
+# Trechos longos não mudam o veredito e só tornam a detecção lenta.
+_LANGUAGE_SAMPLE = 3000
 
 
 class DocumentProfile(BaseModel, frozen=True):
@@ -47,12 +55,20 @@ class DocumentProfile(BaseModel, frozen=True):
     source_type: Literal["manual", "norma", "guia"]
     manufacturer: str = Field(min_length=1)
     language: str = Field(min_length=1)
+    # True: o idioma é detectado por seção (manual trilíngue); `language` vira o fallback.
+    detect_language: bool = False
 
 
 # Metadados fixos de cada PDF admitido; documento fora desta lista não é ingerido.
 _DOCUMENTS: dict[str, DocumentProfile] = {
     "weg-guia-especificacao-50032749": DocumentProfile(
         source_type="guia", manufacturer="weg", language="pt-BR"
+    ),
+    "weg-manual-geral-iom-50033244": DocumentProfile(
+        source_type="manual", manufacturer="weg", language="pt-BR", detect_language=True
+    ),
+    "weg-w22-catalogo-50025536": DocumentProfile(
+        source_type="manual", manufacturer="weg", language="pt-BR"
     ),
 }
 
@@ -111,17 +127,29 @@ def _chunk(document: ExtractedDocument) -> tuple[Chunk, ...]:
             "Registre os metadados dele em eletric_motor/rag/chunk.py."
         )
     chunks: list[Chunk] = []
+    language = profile.language
     for section in document.sections:
-        chunks.extend(_section_chunks(document, section, profile))
+        if profile.detect_language:
+            language = _language_of(section.markdown, fallback=language)
+        chunks.extend(_section_chunks(document, section, profile, language))
     if not chunks:
         raise SystemExit(f"O documento {document.document_id} não gerou nenhum chunk.")
     return tuple(chunks)
+
+
+def _language_of(text: str, fallback: str) -> str:
+    try:
+        code = detect(text[:_LANGUAGE_SAMPLE])
+    except LangDetectException:
+        return fallback
+    return _LANGUAGE_MAP.get(code, fallback)
 
 
 def _section_chunks(
     document: ExtractedDocument,
     section: DocumentSection,
     profile: DocumentProfile,
+    language: str,
 ) -> list[Chunk]:
     title = section.section_path[-1]
     chunks: list[Chunk] = []
@@ -133,7 +161,7 @@ def _section_chunks(
                 continue
             pieces = _split_prose(block)
         chunks.extend(
-            _make_chunk(document, section, profile, kind, piece) for piece in pieces
+            _make_chunk(document, section, profile, language, kind, piece) for piece in pieces
         )
     return chunks
 
@@ -190,6 +218,7 @@ def _make_chunk(
     document: ExtractedDocument,
     section: DocumentSection,
     profile: DocumentProfile,
+    language: str,
     kind: Literal["prose", "table"],
     content: str,
 ) -> Chunk:
@@ -204,7 +233,7 @@ def _make_chunk(
         tokens=_count_tokens(content),
         source_type=profile.source_type,
         manufacturer=profile.manufacturer,
-        language=profile.language,
+        language=language,
         topic=_topic_for(section.section_path),
     )
 

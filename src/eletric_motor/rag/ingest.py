@@ -1,7 +1,10 @@
+import re
 import time
 from pathlib import Path
 
-from docling.document_converter import DocumentConverter
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.pipeline_options import PdfPipelineOptions, TableFormerMode
+from docling.document_converter import DocumentConverter, PdfFormatOption
 from pydantic import BaseModel, ConfigDict, Field
 
 from eletric_motor.rag.chunk import Chunk, chunk_document
@@ -21,10 +24,43 @@ from eletric_motor.rag.trace import (
 _MAX_SECTION_DEPTH = 4
 _SKIP_LABELS = {"picture", "document_index", "footnote"}
 _BULLET_PREFIXES = ("- ", "* ", "口")
-# Cabeçalho repetido no alto das páginas do guia; não é seção do documento.
-_PAGE_HEADER = "acessórios opcionais"
-# Títulos de capa e índice, sem numeração, que abrem o documento.
-_TOP_LEVEL = ("índice", "guia de especificação", "especificação de motores elétricos")
+# Numeração no início do título: "1 T", "1. T", "1.2 T" e "1.Texto" (catálogo W22).
+_SECTION_NUMBER = re.compile(r"^(\d+(?:\.\d+)*)\.?(?:\s|[\x00-\x1f]|$|(?=[A-ZÀ-Ö]))")
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f]+")
+# Títulos numerados que não são seções: caixas de referência cruzada do manual.
+_FALSE_HEADERS: dict[str, tuple[str, ...]] = {
+    "weg-manual-geral-iom-50033244": (
+        "8. recomendações adicionais:",
+        "8. recomendaciones adicionales:",
+    ),
+}
+# Cabeçalho repetido no alto das páginas; não é seção do documento.
+_PAGE_HEADERS: dict[str, tuple[str, ...]] = {
+    "weg-guia-especificacao-50032749": ("acessórios opcionais",),
+}
+# Títulos de capa e índice, sem numeração, que abrem cada documento.
+_TOP_LEVELS: dict[str, tuple[str, ...]] = {
+    "weg-guia-especificacao-50032749": (
+        "índice",
+        "guia de especificação",
+        "especificação de motores elétricos",
+    ),
+    "weg-manual-geral-iom-50033244": (
+        "electric motors",
+        "eletric motors",
+        "motores elétricos",
+        "motores eléctricos",
+        "installation, operation and maintenance manual",
+        "manual general de instalación",
+        "manual geral de instalação",
+    ),
+    "weg-w22-catalogo-50025536": (
+        "linha w22",
+        "índice",
+        "eficiência e confiabilidade",
+        "lei de eficiência energética",
+    ),
+}
 
 
 class DocumentSection(BaseModel, frozen=True):
@@ -77,6 +113,7 @@ def ingest_document(path: Path) -> IngestResult:
                 chunks=len(chunks),
                 points_written=store.points_written,
                 points_existing=store.points_existing,
+                points_updated=store.points_updated,
                 latency_ms=elapsed_ms(started),
             ),
         )
@@ -122,7 +159,7 @@ def _log_started(document_id: str) -> None:
 def _extract(path: Path) -> ExtractedDocument:
     if not path.is_file():
         raise FileNotFoundError(path)
-    result = DocumentConverter().convert(str(path))
+    result = _converter().convert(str(path))
     doc = result.document
     pages = len(doc.pages)
     if pages == 0:
@@ -133,6 +170,9 @@ def _extract(path: Path) -> ExtractedDocument:
     current_path: tuple[str, ...] = (path.stem,)
     current_page = 1
     buffer: list[str] = []
+    page_headers = _PAGE_HEADERS.get(path.stem, ())
+    top_levels = _TOP_LEVELS.get(path.stem, ())
+    false_headers = _FALSE_HEADERS.get(path.stem, ())
 
     def flush() -> None:
         markdown = "\n\n".join(buffer).strip()
@@ -153,8 +193,8 @@ def _extract(path: Path) -> ExtractedDocument:
         prov = getattr(item, "prov", None)
         page = prov[0].page_no if prov else current_page
         if label == "section_header":
-            title = item.text.strip()
-            if _is_page_noise(title):
+            title = _CONTROL_CHARS.sub(" ", item.text).strip()
+            if _is_page_noise(title, page_headers, top_levels, false_headers):
                 continue
             flush()
             depth = _section_depth(title)
@@ -182,25 +222,37 @@ def _extract(path: Path) -> ExtractedDocument:
     )
 
 
-def _is_page_noise(title: str) -> bool:
+# O modo accurate do TableFormer mutilou grades grandes (924 de 926 células da
+# Tabela 1.2 do guia descartadas, sobrou 2x2); o modo fast extraiu a grade 46x31.
+def _converter() -> DocumentConverter:
+    options = PdfPipelineOptions()
+    options.table_structure_options.mode = TableFormerMode.FAST
+    return DocumentConverter(
+        format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)}
+    )
+
+
+def _is_page_noise(
+    title: str,
+    page_headers: tuple[str, ...],
+    top_levels: tuple[str, ...],
+    false_headers: tuple[str, ...],
+) -> bool:
     lowered = title.casefold()
-    if lowered == _PAGE_HEADER:
+    if lowered in page_headers or lowered in false_headers:
         return True
-    head = title.split(" ", 1)[0].rstrip(".")
-    if head.isdigit() or (head.replace(".", "").isdigit() and "." in head):
+    if _SECTION_NUMBER.match(title):
         return False
-    if lowered.startswith(_TOP_LEVEL):
+    if lowered.startswith(top_levels):
         return False
     return True
 
 
 def _section_depth(title: str) -> int:
-    head = title.split(" ", 1)[0].rstrip(".")
-    if head.isdigit():
+    match = _SECTION_NUMBER.match(title)
+    if match is None:
         return 1
-    if head.replace(".", "").isdigit() and "." in head:
-        return min(head.count(".") + 1, _MAX_SECTION_DEPTH)
-    return 1
+    return min(match.group(1).count(".") + 1, _MAX_SECTION_DEPTH)
 
 
 def _item_markdown(item: object, label: str, doc: object) -> str:

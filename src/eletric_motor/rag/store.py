@@ -1,15 +1,14 @@
 import time
 import uuid
-from functools import cache
 from itertools import batched
 
 import numpy as np
-from fastembed import SparseTextEmbedding, TextEmbedding
 from pydantic import BaseModel, ConfigDict, Field
 from qdrant_client import QdrantClient, models
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 
 from eletric_motor.rag.chunk import Chunk
+from eletric_motor.rag.embeddings import PASSAGE_PREFIX, dense_model, sparse_model
 from eletric_motor.rag.collection import ensure_collection
 from eletric_motor.rag.settings import Settings
 from eletric_motor.rag.trace import (
@@ -22,11 +21,6 @@ from eletric_motor.rag.trace import (
     release_trace,
 )
 
-# Dimensão presa a intfloat/multilingual-e5-large; trocar o modelo exige outra coleção.
-_DENSE_MODEL = "intfloat/multilingual-e5-large"
-_SPARSE_MODEL = "Qdrant/bm25"
-# O e5 exige o prefixo "passage: " em documentos ("query: " nas consultas, fase de busca).
-_PASSAGE_PREFIX = "passage: "
 _UPSERT_BATCH = 64
 # O default do cliente é 5 s; o upsert com wait=true compete por CPU com o embedding.
 _QDRANT_TIMEOUT_S = 60
@@ -37,6 +31,7 @@ class StoreResult(BaseModel, frozen=True):
 
     points_written: int = Field(ge=0)
     points_existing: int = Field(ge=0)
+    points_updated: int = Field(ge=0)
 
 
 def store_chunks(chunks: tuple[Chunk, ...]) -> StoreResult:
@@ -71,6 +66,7 @@ def store_chunks(chunks: tuple[Chunk, ...]) -> StoreResult:
                 document_id=document_id,
                 points_written=result.points_written,
                 points_existing=result.points_existing,
+                points_updated=result.points_updated,
                 latency_ms=elapsed_ms(started),
             ),
         )
@@ -82,22 +78,72 @@ def store_chunks(chunks: tuple[Chunk, ...]) -> StoreResult:
 def _store(chunks: tuple[Chunk, ...]) -> StoreResult:
     settings = Settings()
     ids = [_point_id(chunk) for chunk in chunks]
-    # O embedding leva minutos; a conexão com o Qdrant só abre depois dele,
-    # para o upsert não reusar uma conexão keep-alive que o servidor já fechou.
-    points = _points(chunks, ids, settings)
-
     client = QdrantClient(url=settings.qdrant_url, timeout=_QDRANT_TIMEOUT_S)
     ensure_collection(client, settings)
     found = client.retrieve(
-        settings.collection_name, ids, with_payload=False, with_vectors=False
+        settings.collection_name, ids, with_payload=True, with_vectors=False
     )
-    for batch in batched(points, _UPSERT_BATCH):
-        # upsert exige list: tupla pula a conversão para PointsList no cliente
-        # e vira corpo de streaming inválido no httpx (Qdrant responde 400).
-        client.upsert(settings.collection_name, list(batch))
+    existing = {str(point.id): point.payload for point in found}
+    # Só embeda o que falta: reingestão de documento igual não roda o modelo,
+    # e uma falha no meio retoma de onde parou.
+    todo = [
+        (chunk, point_id)
+        for chunk, point_id in zip(chunks, ids, strict=True)
+        if point_id not in existing
+    ]
+    # Upsert a cada lote: a conexão não fica minutos parada durante o embedding.
+    for batch in batched(todo, _UPSERT_BATCH):
+        points = _points(
+            tuple(chunk for chunk, _ in batch),
+            [point_id for _, point_id in batch],
+            settings,
+        )
+        client.upsert(settings.collection_name, points)
+    updated = _refresh_payloads(client, settings, chunks, ids, existing)
+    _delete_stale(client, settings, chunks[0].document_id, ids)
     return StoreResult(
-        points_written=len(points) - len(found),
+        points_written=len(todo),
         points_existing=len(found),
+        points_updated=updated,
+    )
+
+
+# O metadado de um trecho inalterado também evolui (ex.: hierarquia de seções
+# corrigida); set_payload atualiza sem reembedar o vetor.
+def _refresh_payloads(
+    client: QdrantClient,
+    settings: Settings,
+    chunks: tuple[Chunk, ...],
+    ids: list[str],
+    existing: dict[str, dict],
+) -> int:
+    updated = 0
+    for chunk, point_id in zip(chunks, ids, strict=True):
+        payload = existing.get(point_id)
+        if payload is None:
+            continue
+        new_payload = chunk.model_dump(mode="json", exclude_none=True)
+        if payload != new_payload:
+            client.set_payload(settings.collection_name, new_payload, points=[point_id])
+            updated += 1
+    return updated
+
+
+# Extração nova muda o hash do trecho: pontos do documento fora do lote atual
+# são restos de uma extração anterior e saem da coleção.
+def _delete_stale(
+    client: QdrantClient, settings: Settings, document_id: str, ids: list[str]
+) -> None:
+    client.delete(
+        collection_name=settings.collection_name,
+        points_selector=models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="document_id", match=models.MatchValue(value=document_id)
+                )
+            ],
+            must_not=[models.HasIdCondition(has_id=ids)],
+        ),
     )
 
 
@@ -107,8 +153,8 @@ def _points(
     settings: Settings,
 ) -> list[models.PointStruct]:
     # BM25 é lexical: o esparso recebe o texto cru, sem o prefixo do e5.
-    dense = list(_dense_model().embed([_PASSAGE_PREFIX + c.content for c in chunks]))
-    sparse = list(_sparse_model().embed([c.content for c in chunks]))
+    dense = list(dense_model().embed([PASSAGE_PREFIX + c.content for c in chunks]))
+    sparse = list(sparse_model().embed([c.content for c in chunks]))
     for chunk, dense_vector, sparse_vector in zip(chunks, dense, sparse, strict=True):
         _require_finite(chunk, dense_vector, sparse_vector.values)
     return [
@@ -138,16 +184,6 @@ def _require_finite(chunk: Chunk, dense: np.ndarray, sparse_values: np.ndarray) 
 # O id deriva do documento e do hash do trecho: reingestão sobrescreve, não duplica.
 def _point_id(chunk: Chunk) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{chunk.document_id}:{chunk.content_hash}"))
-
-
-@cache
-def _dense_model() -> TextEmbedding:
-    return TextEmbedding(model_name=_DENSE_MODEL)
-
-
-@cache
-def _sparse_model() -> SparseTextEmbedding:
-    return SparseTextEmbedding(model_name=_SPARSE_MODEL)
 
 
 def _log_failed(document_id: str, exc: BaseException, started: float) -> None:

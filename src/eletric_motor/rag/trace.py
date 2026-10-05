@@ -41,6 +41,12 @@ class TraceContext(BaseModel, frozen=True):
     chunks: int | None = Field(default=None, ge=0)
     points_written: int | None = Field(default=None, ge=0)
     points_existing: int | None = Field(default=None, ge=0)
+    points_updated: int | None = Field(default=None, ge=0)
+    span: str | None = None
+    filters: dict[str, str] | None = None
+    dense_hits: int | None = Field(default=None, ge=0)
+    sparse_hits: int | None = Field(default=None, ge=0)
+    fused_hits: int | None = Field(default=None, ge=0)
     latency_ms: int | None = None
     error_type: str | None = None
     error_message: str | None = None

@@ -61,6 +61,7 @@ Essa tupla não é campo de `Settings`. Nenhuma variável de ambiente a substitu
 | `dense_vector_name` | `dense` | `DENSE_VECTOR_NAME` | string |
 | `sparse_vector_name` | `sparse` | `SPARSE_VECTOR_NAME` | string |
 | `dense_size` | `1024` | `DENSE_SIZE` | inteiro `>= 1` |
+| `embedding_threads` | vazio | `EMBEDDING_THREADS` | inteiro `>= 1` |
 
 O nome da variável é o nome do campo, sem prefixo, com maiúsculas e minúsculas ignoradas. `qdrant_url` e `QDRANT_URL` são a mesma variável.
 
