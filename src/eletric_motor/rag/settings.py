@@ -1,0 +1,23 @@
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Dimensão de intfloat/multilingual-e5-large. Trocar o modelo exige outra coleção.
+DENSE_SIZE = 1024
+
+PAYLOAD_INDEXES = (
+    "source_type",
+    "manufacturer",
+    "topic",
+    "norm_code",
+    "language",
+)
+
+
+class Settings(BaseSettings, frozen=True):
+    model_config = SettingsConfigDict(extra="ignore", validate_by_name=True)
+
+    qdrant_url: str = "http://localhost:6333"
+    collection_name: str = Field(default="eletric_motor", validation_alias="QDRANT_COLLECTION")
+    dense_vector_name: str = "dense"
+    sparse_vector_name: str = "sparse"
+    dense_size: int = Field(default=DENSE_SIZE, ge=1)

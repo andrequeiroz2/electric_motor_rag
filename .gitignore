@@ -1,0 +1,16 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Exemplares locais. O Git não versiona o PDF.
+data/norms/**
+!data/norms/.gitkeep
+data/weg/**
+!data/weg/.gitkeep
