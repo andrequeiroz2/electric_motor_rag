@@ -24,6 +24,11 @@ def main() -> None:
     query.add_argument("--topic", help="Filtra por tópico (ex.: partida)")
     query.add_argument("--norm-code", help="Filtra por código de norma (ex.: 5410)")
     query.add_argument("--language", help="Filtra por idioma (ex.: pt-BR)")
+    query.add_argument(
+        "--rerank",
+        action="store_true",
+        help="Reordena os trechos com o cross-encoder (desligado por padrão)",
+    )
     answer = sub.add_parser("answer", help="Responde a pergunta com citação das fontes")
     answer.add_argument("question", help="Pergunta em linguagem natural")
     answer.add_argument("--limit", type=int, default=16, help="Quantos trechos usar (padrão 16)")
@@ -32,6 +37,12 @@ def main() -> None:
     answer.add_argument("--topic", help="Filtra por tópico (ex.: partida)")
     answer.add_argument("--norm-code", help="Filtra por código de norma (ex.: 5410)")
     answer.add_argument("--language", help="Filtra por idioma (ex.: pt-BR)")
+    answer.add_argument(
+        "--no-rerank",
+        dest="rerank",
+        action="store_false",
+        help="Não reordenar os trechos com o cross-encoder",
+    )
     args = parser.parse_args()
     if args.command == "init-collection":
         status = init_collection()
@@ -59,7 +70,7 @@ def main() -> None:
             norm_code=args.norm_code,
             language=args.language,
         )
-        result = search_chunks(args.question, filters, limit=args.limit)
+        result = search_chunks(args.question, filters, limit=args.limit, rerank=args.rerank)
         print(f"{len(result.hits)} trechos para: {args.question}")
         for rank, hit in enumerate(result.hits, start=1):
             chunk = hit.chunk
@@ -80,7 +91,7 @@ def main() -> None:
             norm_code=args.norm_code,
             language=args.language,
         )
-        result = answer_question(args.question, filters, limit=args.limit)
+        result = answer_question(args.question, filters, limit=args.limit, rerank=args.rerank)
         print(result.answer)
         cited = result.cited_hits
         if not cited:

@@ -29,7 +29,7 @@ Não há biblioteca de tracing. OpenTelemetry, structlog e logging de terceiros 
 ## Arquitetura
 
 ```text
-operação (init_collection ou ensure_collection)
+operação (init_collection, ingest_document, search_chunks ou answer_question)
   trace_scope / bind_trace     guarda trace_id na ContextVar
   log_event                    valida LogEvent e entrega ao logging
   logger eletric_motor         nível INFO, propagate False
@@ -74,13 +74,15 @@ Campos de contexto definidos hoje:
 | `points_written` | Pontos novos gravados na coleção |
 | `points_existing` | Pontos que já existiam na coleção |
 | `points_updated` | Pontos existentes com payload atualizado, sem reembedar |
-| `span` | Etapa da operação: `ingest`, `retrieve` ou `generate` |
+| `span` | Etapa da operação: `ingest`, `retrieve`, `rerank` ou `generate` |
 | `filters` | Filtros de payload aplicados na consulta |
 | `dense_hits` | Profundidade pedida ao braço denso |
 | `sparse_hits` | Profundidade pedida ao braço esparso |
-| `fused_hits` | Trechos devolvidos após a fusão RRF; na geração, trechos enviados ao LLM |
+| `fused_hits` | Trechos devolvidos após a fusão RRF; no rerank, trechos após o corte do cross-encoder; na geração, trechos enviados ao LLM |
 | `llm_model` | Nome do modelo de linguagem usado na geração |
 | `answer_chars` | Tamanho da resposta gerada, em caracteres, `>= 0` |
+| `rerank_model` | Nome do cross-encoder usado no rerank |
+| `rerank_candidates` | Trechos fundidos enviados ao reranker, `>= 0` |
 | `latency_ms` | Inteiro, milissegundos de `perf_counter` |
 | `error_type` | `type(exc).__name__` |
 | `error_message` | Primeira linha do erro, no máximo 200 caracteres |
@@ -164,12 +166,15 @@ Nome é contrato.
 | `collection.ensured` | Coleção criada ou conferida, índices aplicados |
 | `collection.init.failed` | A mesma operação falhou |
 | `ingest.document.started` | Entrada da ingestão de um PDF |
+| `ingest.document.extracted` | PDF extraído pelo Docling, com páginas e seções |
 | `ingest.document.chunked` | Documento cortado em chunks, com contagens |
 | `ingest.document.stored` | Chunks gravados na coleção, com contagens de pontos |
 | `ingest.document.completed` | PDF extraído, cortado e gravado |
 | `ingest.document.failed` | A ingestão do documento falhou |
 | `retrieve.hybrid.completed` | Consulta híbrida fundida, com contagens e latência |
 | `retrieve.hybrid.failed` | A consulta híbrida falhou |
+| `rerank.completed` | Trechos reordenados pelo cross-encoder, com contagens e latência |
+| `rerank.failed` | O rerank falhou |
 | `generate.answered` | Resposta do LLM gerada, com modelo e tamanho |
 | `generate.failed` | A chamada ao LLM falhou |
 
@@ -200,6 +205,14 @@ Falha na chamada ao LLM: `generate.failed` com `error_type`, `error_message` e a
 
 A chave da API não é campo de `TraceContext`. O prompt e a resposta não entram na linha: o tamanho da resposta vai em `answer_chars`.
 
+## Operação de rerank
+
+Com `rerank` ligado, `search_chunks` pede `rerank_candidates` trechos à fusão RRF e os reordena com o cross-encoder antes de cortar no `limit`. O evento sai no mesmo `trace_id` do retrieve, entre `retrieve.hybrid.completed` e a resposta da função.
+
+Sucesso: `rerank.completed` com `span="rerank"`, `collection`, `rerank_model`, `rerank_candidates`, `fused_hits` (trechos devolvidos após o corte) e `latency_ms`. O relógio cobre só o cross-encoder, não a busca.
+
+Falha: `rerank.failed` com os campos de erro de sempre, e a operação sobe como `SystemExit`. Não há fallback silencioso para a ordem RRF. O `retrieve.hybrid.completed` já foi emitido nesse caminho: o `except SystemExit` de `search_chunks` não repete o `retrieve.hybrid.failed`.
+
 ## Como emitir um evento novo
 
 1. Abrir `trace_scope` na borda da operação. Se a função também puder ser chamada por dentro de outra já rastreada, usar `bind_trace` e `release_trace`.
@@ -224,4 +237,4 @@ def run() -> None:
         )
 ```
 
-O exemplo acima só passa a validar quando `TraceContext` tiver os campos da consulta. Até lá, use os campos já declarados ou estenda o modelo primeiro.
+O exemplo usa só campos já declarados. Para um dado novo, estenda o modelo primeiro: campo desconhecido falha na validação por causa do `extra="forbid"`.

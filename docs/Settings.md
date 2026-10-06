@@ -66,6 +66,8 @@ Essa tupla não é campo de `Settings`. Nenhuma variável de ambiente a substitu
 | `embedding_threads` | vazio | `EMBEDDING_THREADS` | inteiro `>= 1` |
 | `openai_api_key` | vazio | `OPENAI_API_KEY` | `SecretStr`, nunca impressa |
 | `llm_model` | `gpt-4o` | `LLM_MODEL` | string |
+| `reranker_model` | `jinaai/jina-reranker-v2-base-multilingual` | `RERANKER_MODEL` | string |
+| `rerank_candidates` | `24` | `RERANK_CANDIDATES` | inteiro `>= 1` |
 
 O nome da variável é o nome do campo, sem prefixo, com maiúsculas e minúsculas ignoradas. `qdrant_url` e `QDRANT_URL` são a mesma variável.
 
@@ -88,7 +90,7 @@ settings.dense_size = 384  # ValidationError
 
 A configuração muda na construção seguinte, por variável ou por argumento. A instância antiga permanece com os valores que tinha.
 
-Quem usa o objeto só lê. `ensure_collection` e `_require_compatible` leem `collection_name`, `dense_vector_name`, `sparse_vector_name` e `dense_size`. `init_collection` lê `qdrant_url` para abrir o `QdrantClient` e para a frase da CLI. `answer_question` lê `openai_api_key` e `llm_model` para montar o `ChatOpenAI`. O trace não grava `qdrant_url` nem a chave: URL pode carregar segredo e `SecretStr` não serializa. Os nomes e o tamanho do vetor entram em `collection.init.started`; o nome do modelo entra em `generate.answered`.
+Quem usa o objeto só lê. `ensure_collection` e `_require_compatible` leem `collection_name`, `dense_vector_name`, `sparse_vector_name` e `dense_size`. `init_collection`, `search_chunks` e o `store` leem `qdrant_url` e `collection_name` para falar com o Qdrant. `answer_question` lê `openai_api_key` e `llm_model` para montar o `ChatOpenAI`. `search_chunks` lê `rerank_candidates` para decidir quantos trechos fundidos pedir. `rerank.py` lê `reranker_model` e `embedding_threads`; `embeddings.py` lê `embedding_threads`. O trace não grava `qdrant_url` nem a chave: URL pode carregar segredo e `SecretStr` não serializa. Os nomes e o tamanho do vetor entram em `collection.init.started`; os nomes dos modelos entram em `generate.answered` e `rerank.completed`.
 
 ## O que cada campo faz na coleção
 
@@ -99,6 +101,18 @@ Quem usa o objeto só lê. `ensure_collection` e `_require_compatible` leem `col
 `dense_vector_name` e `sparse_vector_name` são as chaves dos dois vetores na mesma coleção. O denso usa distância cosseno. O esparso usa o modificador IDF do BM25. Esses nomes não estão no ambiente por padrão; `DENSE_VECTOR_NAME` e `SPARSE_VECTOR_NAME` existem porque o `BaseSettings` expõe todo campo.
 
 `dense_size` é o tamanho do vetor denso passado a `VectorParams`. `_require_compatible` recusa coleção já existente com outro tamanho ou outra distância.
+
+## O que cada campo faz fora da coleção
+
+`embedding_threads` limita os núcleos do onnxruntime no embedding e no reranker. Vazio, o runtime usa todos os núcleos.
+
+`openai_api_key` autentica a chamada ao LLM. Vazia, `answer_question` para antes da rede com a frase de orientação.
+
+`llm_model` é o modelo passado ao `ChatOpenAI`. Vale qualquer modelo de chat da OpenAI; a conta e o custo mudam, o contrato não.
+
+`reranker_model` é o cross-encoder carregado pelo `TextCrossEncoder` do fastembed. Trocar exige um modelo da lista de suportados do fastembed — `bge-reranker-v2-m3` não está nela.
+
+`rerank_candidates` é a profundidade da fusão RRF quando o rerank está ligado: a busca pede esse tanto de trechos e o cross-encoder corta no `limit` pedido.
 
 ## Como acrescentar um campo
 

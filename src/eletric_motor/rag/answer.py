@@ -60,6 +60,7 @@ def answer_question(
     question: str,
     filters: SearchFilters | None = None,
     limit: int = 16,
+    rerank: bool = True,
 ) -> AnswerResult:
     token = bind_trace()
     started = time.perf_counter()
@@ -72,7 +73,7 @@ def answer_question(
             "gerar respostas."
         )
     try:
-        result = search_chunks(question, filters, limit=limit)
+        result = search_chunks(question, filters, limit=limit, rerank=rerank)
         answer = _generate(question, result.hits, settings)
     except SystemExit:
         raise

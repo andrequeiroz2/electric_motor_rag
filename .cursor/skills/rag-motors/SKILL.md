@@ -18,7 +18,7 @@ Implemente só a fase que o usuário pediu. Não antecipe Redis, reranker nem MC
 3. Consulta híbrida com filtro de metadado.
 4. Resposta do LLM com citação de fonte, seção e trecho do texto. Página não aparece: o usuário não tem o PDF.
 5. Redis: cache de embedding e de resposta.
-6. Reranker `bge-reranker-v2-m3`.
+6. Reranker `jinaai/jina-reranker-v2-base-multilingual` via fastembed (o `bge-reranker-v2-m3` do plano original não é suportado pelo fastembed; usá-lo puxaria PyTorch).
 7. MCP: `calcular_corrente_nominal` e `calcular_queda_tensao`.
 
 ## Stack fixa

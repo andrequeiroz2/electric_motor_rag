@@ -55,32 +55,17 @@ def search_chunks(
     question: str,
     filters: SearchFilters | None = None,
     limit: int = 8,
+    rerank: bool = False,
 ) -> SearchResult:
     token = bind_trace()
     started = time.perf_counter()
     settings = Settings()
     filters = filters or SearchFilters()
+    fetch = max(limit, settings.rerank_candidates) if rerank else limit
+    retrieved = False
     try:
-        result = _search(question, filters, limit, settings)
-    except UnexpectedResponse as exc:
-        if token is not None:
-            _log_failed(exc, started)
-        raise SystemExit(error_message(exc)) from exc
-    except ResponseHandlingException as exc:
-        if token is not None:
-            _log_failed(exc, started)
-        raise SystemExit(
-            "Qdrant indisponível. Suba o serviço com docker compose up -d."
-        ) from exc
-    except SystemExit as exc:
-        if token is not None:
-            _log_failed(exc, started)
-        raise
-    except Exception as exc:
-        if token is not None:
-            _log_failed(exc, started)
-        raise SystemExit("Não consegui consultar a coleção.") from exc
-    else:
+        result = _search(question, filters, fetch, settings)
+        retrieved = True
         log_event(
             "retrieve.hybrid.completed",
             logger_name=__name__,
@@ -94,6 +79,28 @@ def search_chunks(
                 latency_ms=elapsed_ms(started),
             ),
         )
+        if rerank:
+            result = _apply_rerank(question, result, limit, settings)
+    except UnexpectedResponse as exc:
+        if token is not None:
+            _log_failed(exc, started)
+        raise SystemExit(error_message(exc)) from exc
+    except ResponseHandlingException as exc:
+        if token is not None:
+            _log_failed(exc, started)
+        raise SystemExit(
+            "Qdrant indisponível. Suba o serviço com docker compose up -d."
+        ) from exc
+    except SystemExit as exc:
+        # SystemExit do rerank já foi registrada como rerank.failed.
+        if token is not None and not retrieved:
+            _log_failed(exc, started)
+        raise
+    except Exception as exc:
+        if token is not None:
+            _log_failed(exc, started)
+        raise SystemExit("Não consegui consultar a coleção.") from exc
+    else:
         return result
     finally:
         release_trace(token)
@@ -136,6 +143,57 @@ def _search(
     )
     # O cliente não expõe a contagem por braço; o log registra a profundidade pedida.
     return SearchResult(hits=hits, dense_hits=_PREFETCH, sparse_hits=_PREFETCH)
+
+
+def _apply_rerank(
+    question: str,
+    result: SearchResult,
+    limit: int,
+    settings: Settings,
+) -> SearchResult:
+    # Importe adiado: rerank.py importa SearchHit deste módulo.
+    from eletric_motor.rag.rerank import rerank_hits
+
+    started = time.perf_counter()
+    try:
+        hits = rerank_hits(question, result.hits, limit)
+    except Exception as exc:
+        origin = error_origin(exc)
+        log_event(
+            "rerank.failed",
+            level="error",
+            logger_name=__name__,
+            context=TraceContext(
+                span="rerank",
+                collection=settings.collection_name,
+                rerank_model=settings.reranker_model,
+                rerank_candidates=len(result.hits),
+                latency_ms=elapsed_ms(started),
+                error_type=type(exc).__name__,
+                error_message=error_message(exc),
+                error_file=None if origin is None else origin[0],
+                error_line=None if origin is None else origin[1],
+                error_function=None if origin is None else origin[2],
+            ),
+        )
+        raise SystemExit("Não consegui reordenar os trechos.") from exc
+    log_event(
+        "rerank.completed",
+        logger_name=__name__,
+        context=TraceContext(
+            span="rerank",
+            collection=settings.collection_name,
+            rerank_model=settings.reranker_model,
+            rerank_candidates=len(result.hits),
+            fused_hits=len(hits),
+            latency_ms=elapsed_ms(started),
+        ),
+    )
+    return SearchResult(
+        hits=hits,
+        dense_hits=result.dense_hits,
+        sparse_hits=result.sparse_hits,
+    )
 
 
 def _qdrant_filter(filters: SearchFilters) -> models.Filter | None:

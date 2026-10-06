@@ -26,3 +26,6 @@ class Settings(BaseSettings, frozen=True):
     # Chave da OpenAI. Nunca vai para o trace nem para a frase da CLI.
     openai_api_key: SecretStr | None = None
     llm_model: str = "gpt-4o"
+    # Cross-encoder local que reordena os trechos fundidos antes do corte.
+    reranker_model: str = "jinaai/jina-reranker-v2-base-multilingual"
+    rerank_candidates: int = Field(default=24, ge=1)

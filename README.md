@@ -13,6 +13,7 @@ RAG de documentação técnica de motores elétricos. Pergunte em português —
 
 - **Ingere PDFs técnicos**: extrai texto e tabelas com Docling, corta em chunks por seção (prosa de 500–800 tokens, tabela inteira em um chunk) e grava no Qdrant com metadados (tipo de fonte, fabricante, tópico, idioma).
 - **Busca híbrida**: vetor denso (`intfloat/multilingual-e5-large`, 1024 dimensões) + vetor esparso (BM25) fundidos com RRF. Filtros por metadado quando a pergunta pede.
+- **Rerank**: cross-encoder local (`jina-reranker-v2-base-multilingual`) reordena os 24 trechos fundidos antes do corte — o trecho certo sobe sem precisar de limite alto.
 - **Responde com citação**: o LLM (gpt-4o) responde só com base nos trechos recuperados, cita `[n]` em cada afirmação e a CLI mostra o texto das fontes citadas — sem precisar abrir o PDF.
 - **Rastreável**: cada operação emite eventos JSON no stderr com `trace_id` único, da busca à resposta (ver [docs/Tracing.md](docs/Tracing.md)).
 - **Idempotente**: reingerir o mesmo PDF não duplica pontos; metadados mudados são atualizados sem reembedar.
@@ -22,7 +23,7 @@ RAG de documentação técnica de motores elétricos. Pergunte em português —
 ```text
 PDF ──► Docling (Markdown) ──► chunk por seção ──► embeddings ──► Qdrant
                                       │              dense + sparse
-pergunta ──► busca híbrida (RRF) ──► 16 trechos ──► gpt-4o ──► resposta + fontes
+pergunta ──► busca híbrida (RRF) ──► rerank ──► 16 trechos ──► gpt-4o ──► resposta + fontes
                  │                                                  │
                  └────────── trace JSON no stderr (trace_id) ◄──────┘
 ```
@@ -35,9 +36,7 @@ pergunta ──► busca híbrida (RRF) ──► 16 trechos ──► gpt-4o �
 ├── data/
 │   ├── weg/                  # PDFs WEG (não versionados)
 │   └── norms/                # Normas (não versionados)
-├── docs/
-│   ├── Tracing.md            # Referência do log estruturado
-│   └── Settings.md           # Referência da configuração
+├── docs/                     # Um .md por módulo de rag/ (ver Documentação)
 ├── src/eletric_motor/
 │   ├── __init__.py           # CLI: init-collection, ingest, query, answer
 │   └── rag/
@@ -101,7 +100,7 @@ uv run eletric-motor answer "como dimensionar condutores para motor trifásico"
 | `query PERGUNTA` | Lista os trechos mais relevantes (sem LLM, não gasta API) |
 | `answer PERGUNTA` | Responde com o LLM e lista as fontes citadas com o texto |
 
-`query` e `answer` aceitam filtros: `--source-type manual|guia`, `--manufacturer weg`, `--topic instalacao`, `--language pt-BR`, `--limit N` (padrão 8 no `query`, 16 no `answer`).
+`query` e `answer` aceitam filtros: `--source-type manual|guia`, `--manufacturer weg`, `--topic instalacao`, `--language pt-BR`, `--limit N` (padrão 8 no `query`, 16 no `answer`). O `answer` reranqueia por padrão (`--no-rerank` desliga); o `query` mostra a busca crua, a menos que `--rerank` seja passado.
 
 ```bash
 uv run eletric-motor answer "como calcular a corrente de rotor bloqueado" --source-type guia
@@ -117,9 +116,19 @@ Variáveis de ambiente ou arquivo `.env` (não versionado):
 | `LLM_MODEL` | `gpt-4o` | Modelo da resposta |
 | `QDRANT_URL` | `http://localhost:6333` | Endereço do Qdrant |
 | `QDRANT_COLLECTION` | `eletric_motor` | Nome da coleção |
-| `EMBEDDING_THREADS` | todos os núcleos | Limite de CPU do embedding local |
+| `EMBEDDING_THREADS` | todos os núcleos | Limite de CPU do embedding e do reranker |
+| `RERANKER_MODEL` | `jinaai/jina-reranker-v2-base-multilingual` | Cross-encoder do rerank |
+| `RERANK_CANDIDATES` | `24` | Trechos fundidos enviados ao reranker |
 
 Referência completa em [docs/Settings.md](docs/Settings.md).
+
+## Documentação
+
+Cada módulo de `src/eletric_motor/rag/` tem sua referência em `docs/`, na ordem do pipeline:
+
+[Collection](docs/Collection.md) → [Ingest](docs/Ingest.md) → [Chunk](docs/Chunk.md) → [Embeddings](docs/Embeddings.md) → [Store](docs/Store.md) → [Search](docs/Search.md) → [Rerank](docs/Rerank.md) → [Answer](docs/Answer.md)
+
+Transversais: [Settings](docs/Settings.md) (configuração) e [Tracing](docs/Tracing.md) (log estruturado).
 
 ## Observabilidade
 
@@ -138,7 +147,7 @@ Cada execução gera eventos com o mesmo `trace_id`: `retrieve.hybrid.completed`
 - [x] Consulta híbrida com filtro de metadado
 - [x] Resposta do LLM com citação de fonte e seção
 - [ ] Redis: cache de embedding e de resposta
-- [ ] Reranker `bge-reranker-v2-m3`
+- [x] Reranker `jina-reranker-v2-base-multilingual` (cross-encoder local via fastembed)
 - [ ] MCP: `calcular_corrente_nominal` e `calcular_queda_tensao`
 
 ## Notas
