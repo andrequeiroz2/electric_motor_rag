@@ -78,7 +78,9 @@ Campos de contexto definidos hoje:
 | `filters` | Filtros de payload aplicados na consulta |
 | `dense_hits` | Profundidade pedida ao braço denso |
 | `sparse_hits` | Profundidade pedida ao braço esparso |
-| `fused_hits` | Trechos devolvidos após a fusão RRF |
+| `fused_hits` | Trechos devolvidos após a fusão RRF; na geração, trechos enviados ao LLM |
+| `llm_model` | Nome do modelo de linguagem usado na geração |
+| `answer_chars` | Tamanho da resposta gerada, em caracteres, `>= 0` |
 | `latency_ms` | Inteiro, milissegundos de `perf_counter` |
 | `error_type` | `type(exc).__name__` |
 | `error_message` | Primeira linha do erro, no máximo 200 caracteres |
@@ -168,8 +170,8 @@ Nome é contrato.
 | `ingest.document.failed` | A ingestão do documento falhou |
 | `retrieve.hybrid.completed` | Consulta híbrida fundida, com contagens e latência |
 | `retrieve.hybrid.failed` | A consulta híbrida falhou |
-| `generate.answered` | Reservado para a fase de resposta |
-| `generate.failed` | Reservado para a fase de resposta |
+| `generate.answered` | Resposta do LLM gerada, com modelo e tamanho |
+| `generate.failed` | A chamada ao LLM falhou |
 
 Exemplo real de sucesso, stderr:
 
@@ -185,6 +187,18 @@ Exemplo real de Qdrant parado:
 ```
 
 Os dois eventos de uma execução compartilham `trace_id`. Entrada e erro, ou entrada e transformação, são o par esperado. `collection.ensured` e `collection.init.failed` não saem juntos na mesma operação.
+
+## Operação de resposta
+
+`answer_question` abre o trace com `bind_trace` e chama `search_chunks`. A busca não abre outro trace: `retrieve.hybrid.completed` e o evento da geração saem com o mesmo `trace_id`.
+
+Sem `OPENAI_API_KEY`, a operação para antes de qualquer evento: nenhum `generate.*` sai no stderr e a frase da CLI orienta a configurar a chave.
+
+Sucesso: `generate.answered` com `span="generate"`, `collection`, `filters`, `fused_hits` (trechos enviados ao LLM), `llm_model`, `answer_chars` e `latency_ms`. O relógio começa na entrada de `answer_question`, antes da busca.
+
+Falha na chamada ao LLM: `generate.failed` com `error_type`, `error_message` e a origem no projeto. Falha na busca (Qdrant parado) sobe como `SystemExit` de `search_chunks`: quem registra é o `retrieve.hybrid.failed`, e a geração não emite evento.
+
+A chave da API não é campo de `TraceContext`. O prompt e a resposta não entram na linha: o tamanho da resposta vai em `answer_chars`.
 
 ## Como emitir um evento novo
 

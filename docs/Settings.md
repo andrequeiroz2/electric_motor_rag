@@ -8,12 +8,13 @@ Este arquivo é a descrição do comportamento implementado. Mudou o código, at
 
 | Peça | Origem | Função neste módulo |
 |---|---|---|
-| `BaseSettings` | `pydantic-settings` v2 | Lê variáveis do processo e valida os campos |
-| `SettingsConfigDict` | `pydantic-settings` v2 | Configura o modelo: `extra` e `validate_by_name` |
+| `BaseSettings` | `pydantic-settings` v2 | Lê variáveis do processo e do `.env`, e valida os campos |
+| `SettingsConfigDict` | `pydantic-settings` v2 | Configura o modelo: `extra`, `validate_by_name` e `env_file` |
 | `Field` | `pydantic` v2 | Default, alias de validação e `ge=1` em `dense_size` |
+| `SecretStr` | `pydantic` v2 | Esconde `openai_api_key` de repr e de serialização |
 | `frozen=True` | argumento de classe do Pydantic | Recusa atribuição depois da criação |
 
-Não há `os.environ` manual nem `from_env()`. O pacote `python-dotenv` pode estar instalado porque o `pydantic-settings` depende dele. Este módulo não configura `env_file`, então um arquivo `.env` não é lido.
+Não há `os.environ` manual nem `from_env()`. O `SettingsConfigDict` configura `env_file=".env"`: um arquivo `.env` na raiz é lido pelo `python-dotenv` (dependência do `pydantic-settings`). O `.env` está no `.gitignore` — é onde mora a `OPENAI_API_KEY`.
 
 ## Arquitetura
 
@@ -21,12 +22,13 @@ Não há `os.environ` manual nem `from_env()`. O pacote `python-dotenv` pode est
 Settings()
   argumento do construtor
   variável do processo
+  arquivo .env
   valor padrão do campo
   validação do Pydantic
   instância congelada
 ```
 
-A ordem é essa. Um argumento `Settings(qdrant_url="http://127.0.0.1:6333")` vence a variável `QDRANT_URL`. A variável vence o padrão `http://localhost:6333`. Valor inválido levanta `ValidationError` na construção. Não há default silencioso no lugar de um valor quebrado.
+A ordem é essa. Um argumento `Settings(qdrant_url="http://127.0.0.1:6333")` vence a variável `QDRANT_URL`. A variável vence o `.env`, que vence o padrão `http://localhost:6333`. Valor inválido levanta `ValidationError` na construção. Não há default silencioso no lugar de um valor quebrado.
 
 `init_collection` chama `Settings()` sem argumentos. Outro script faz o mesmo importando a classe:
 
@@ -62,6 +64,8 @@ Essa tupla não é campo de `Settings`. Nenhuma variável de ambiente a substitu
 | `sparse_vector_name` | `sparse` | `SPARSE_VECTOR_NAME` | string |
 | `dense_size` | `1024` | `DENSE_SIZE` | inteiro `>= 1` |
 | `embedding_threads` | vazio | `EMBEDDING_THREADS` | inteiro `>= 1` |
+| `openai_api_key` | vazio | `OPENAI_API_KEY` | `SecretStr`, nunca impressa |
+| `llm_model` | `gpt-4o` | `LLM_MODEL` | string |
 
 O nome da variável é o nome do campo, sem prefixo, com maiúsculas e minúsculas ignoradas. `qdrant_url` e `QDRANT_URL` são a mesma variável.
 
@@ -84,7 +88,7 @@ settings.dense_size = 384  # ValidationError
 
 A configuração muda na construção seguinte, por variável ou por argumento. A instância antiga permanece com os valores que tinha.
 
-Quem usa o objeto só lê. `ensure_collection` e `_require_compatible` leem `collection_name`, `dense_vector_name`, `sparse_vector_name` e `dense_size`. `init_collection` lê `qdrant_url` para abrir o `QdrantClient` e para a frase da CLI. O trace não grava `qdrant_url`: URL pode carregar segredo. Os nomes e o tamanho do vetor entram em `collection.init.started`.
+Quem usa o objeto só lê. `ensure_collection` e `_require_compatible` leem `collection_name`, `dense_vector_name`, `sparse_vector_name` e `dense_size`. `init_collection` lê `qdrant_url` para abrir o `QdrantClient` e para a frase da CLI. `answer_question` lê `openai_api_key` e `llm_model` para montar o `ChatOpenAI`. O trace não grava `qdrant_url` nem a chave: URL pode carregar segredo e `SecretStr` não serializa. Os nomes e o tamanho do vetor entram em `collection.init.started`; o nome do modelo entra em `generate.answered`.
 
 ## O que cada campo faz na coleção
 

@@ -47,6 +47,8 @@ class TraceContext(BaseModel, frozen=True):
     dense_hits: int | None = Field(default=None, ge=0)
     sparse_hits: int | None = Field(default=None, ge=0)
     fused_hits: int | None = Field(default=None, ge=0)
+    llm_model: str | None = None
+    answer_chars: int | None = Field(default=None, ge=0)
     latency_ms: int | None = None
     error_type: str | None = None
     error_message: str | None = None

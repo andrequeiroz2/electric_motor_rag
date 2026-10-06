@@ -9,6 +9,9 @@ wheels/
 # Virtual environments
 .venv
 
+# Chaves locais
+.env
+
 # Exemplares locais. O Git não versiona o PDF.
 data/norms/**
 !data/norms/.gitkeep

@@ -4,6 +4,7 @@ import sys
 import traceback
 from pathlib import Path
 
+from eletric_motor.rag.answer import answer_question
 from eletric_motor.rag.collection import init_collection
 from eletric_motor.rag.ingest import ingest_document
 from eletric_motor.rag.search import SearchFilters, search_chunks
@@ -23,6 +24,14 @@ def main() -> None:
     query.add_argument("--topic", help="Filtra por tópico (ex.: partida)")
     query.add_argument("--norm-code", help="Filtra por código de norma (ex.: 5410)")
     query.add_argument("--language", help="Filtra por idioma (ex.: pt-BR)")
+    answer = sub.add_parser("answer", help="Responde a pergunta com citação das fontes")
+    answer.add_argument("question", help="Pergunta em linguagem natural")
+    answer.add_argument("--limit", type=int, default=16, help="Quantos trechos usar (padrão 16)")
+    answer.add_argument("--source-type", help="Filtra por tipo de fonte (manual, norma, guia)")
+    answer.add_argument("--manufacturer", help="Filtra por fabricante (ex.: weg)")
+    answer.add_argument("--topic", help="Filtra por tópico (ex.: partida)")
+    answer.add_argument("--norm-code", help="Filtra por código de norma (ex.: 5410)")
+    answer.add_argument("--language", help="Filtra por idioma (ex.: pt-BR)")
     args = parser.parse_args()
     if args.command == "init-collection":
         status = init_collection()
@@ -63,6 +72,28 @@ def main() -> None:
             print(f"    {section}")
             snippet = " ".join(chunk.content.split())[:200]
             print(f"    {snippet}...")
+    elif args.command == "answer":
+        filters = SearchFilters(
+            source_type=args.source_type,
+            manufacturer=args.manufacturer,
+            topic=args.topic,
+            norm_code=args.norm_code,
+            language=args.language,
+        )
+        result = answer_question(args.question, filters, limit=args.limit)
+        print(result.answer)
+        cited = result.cited_hits
+        if not cited:
+            print("\nA resposta não citou trechos da documentação.")
+        else:
+            print("\nFontes citadas:")
+            for hit in cited:
+                chunk = hit.chunk
+                rank = result.hits.index(hit) + 1
+                section = " › ".join(chunk.section_path)
+                print(f"\n[{rank}] {chunk.document_title} — {section}")
+                snippet = " ".join(chunk.content.split())[:500]
+                print(f"    {snippet}...")
 
 
 def cli() -> None:

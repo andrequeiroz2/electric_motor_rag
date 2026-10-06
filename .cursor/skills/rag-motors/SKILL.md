@@ -16,7 +16,7 @@ Implemente só a fase que o usuário pediu. Não antecipe Redis, reranker nem MC
 1. Coleção `motores` no Qdrant — feita.
 2. Ingestão de um PDF: Docling, chunk, dois vetores.
 3. Consulta híbrida com filtro de metadado.
-4. Resposta do LLM com citação de fonte, seção e página.
+4. Resposta do LLM com citação de fonte, seção e trecho do texto. Página não aparece: o usuário não tem o PDF.
 5. Redis: cache de embedding e de resposta.
 6. Reranker `bge-reranker-v2-m3`.
 7. MCP: `calcular_corrente_nominal` e `calcular_queda_tensao`.
@@ -60,4 +60,4 @@ A taxonomia técnica é filtro, não árvore de pastas. Norma ABNT só entra com
 
 ## Consulta
 
-Padrão: `RetrievalMode.HYBRID`, prefetch 40 densos e 40 esparsos, fusão RRF, 8 trechos. Filtro de payload quando a pergunta cita norma, fabricante ou tópico. Se o modelo denso falhar, a mesma coleção responde em modo esparso. A resposta cita fonte, seção e página.
+Padrão: `RetrievalMode.HYBRID`, prefetch 40 densos e 40 esparsos, fusão RRF, 8 trechos (16 na resposta do LLM). Filtro de payload quando a pergunta cita norma, fabricante ou tópico. Se o modelo denso falhar, a mesma coleção responde em modo esparso. A resposta cita fonte e seção, e lista só os trechos citados, com o texto de cada um.
