@@ -17,6 +17,7 @@ dependencies = [
     "pydantic>=2",
     "pydantic-settings>=2",
     "qdrant-client>=1.15",
+    "redis>=5.2",
     "tiktoken>=0.14.0",
 ]
 

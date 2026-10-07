@@ -83,6 +83,8 @@ Campos de contexto definidos hoje:
 | `answer_chars` | Tamanho da resposta gerada, em caracteres, `>= 0` |
 | `rerank_model` | Nome do cross-encoder usado no rerank |
 | `rerank_candidates` | Trechos fundidos enviados ao reranker, `>= 0` |
+| `cache_scope` | O que o cache guarda: `embedding` ou `answer` |
+| `cache_hit` | `true` se o valor estava no cache |
 | `latency_ms` | Inteiro, milissegundos de `perf_counter` |
 | `error_type` | `type(exc).__name__` |
 | `error_message` | Primeira linha do erro, no máximo 200 caracteres |
@@ -177,6 +179,8 @@ Nome é contrato.
 | `rerank.failed` | O rerank falhou |
 | `generate.answered` | Resposta do LLM gerada, com modelo e tamanho |
 | `generate.failed` | A chamada ao LLM falhou |
+| `cache.lookup` | Consulta ao cache, com `cache_scope` e `cache_hit` |
+| `cache.unavailable` | Redis inalcançável; warning, uma vez por processo |
 
 Exemplo real de sucesso, stderr:
 
@@ -212,6 +216,16 @@ Com `rerank` ligado, `search_chunks` pede `rerank_candidates` trechos à fusão 
 Sucesso: `rerank.completed` com `span="rerank"`, `collection`, `rerank_model`, `rerank_candidates`, `fused_hits` (trechos devolvidos após o corte) e `latency_ms`. O relógio cobre só o cross-encoder, não a busca.
 
 Falha: `rerank.failed` com os campos de erro de sempre, e a operação sobe como `SystemExit`. Não há fallback silencioso para a ordem RRF. O `retrieve.hybrid.completed` já foi emitido nesse caminho: o `except SystemExit` de `search_chunks` não repete o `retrieve.hybrid.failed`.
+
+## Operação de cache
+
+`cache_get` emite `cache.lookup` com `span="cache"`, `cache_scope` (`embedding` ou `answer`), `cache_hit` e `latency_ms`. `cache_set` não emite evento: a gravação é efeito colateral da operação que já tem o seu evento.
+
+Resposta vinda do cache não emite `retrieve.*` nem `generate.*`: o único evento dessa execução é o `cache.lookup` com hit. Emitir `generate.answered` sem chamada ao LLM seria mentira no trace.
+
+Redis inalcançável emite `cache.unavailable` em nível warning, com os campos de erro de sempre, e desliga o cache pelo resto do processo: a operação segue sem cache e o warning não se repete. Cache é otimização, não infraestrutura crítica — diferente do reranker, aqui o fallback é o caminho normal.
+
+A chave de cache (SHA-256 dos dados que definem o resultado) e o valor cacheado não entram na linha.
 
 ## Como emitir um evento novo
 

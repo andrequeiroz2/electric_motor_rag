@@ -64,10 +64,15 @@ Essa tupla não é campo de `Settings`. Nenhuma variável de ambiente a substitu
 | `sparse_vector_name` | `sparse` | `SPARSE_VECTOR_NAME` | string |
 | `dense_size` | `1024` | `DENSE_SIZE` | inteiro `>= 1` |
 | `embedding_threads` | vazio | `EMBEDDING_THREADS` | inteiro `>= 1` |
+| `model_cache_dir` | `~/.cache/fastembed` | `MODEL_CACHE_DIR` | caminho |
 | `openai_api_key` | vazio | `OPENAI_API_KEY` | `SecretStr`, nunca impressa |
 | `llm_model` | `gpt-4o` | `LLM_MODEL` | string |
+| `llm_context_tokens` | `12000` | `LLM_CONTEXT_TOKENS` | inteiro `>= 1` |
 | `reranker_model` | `jinaai/jina-reranker-v2-base-multilingual` | `RERANKER_MODEL` | string |
 | `rerank_candidates` | `24` | `RERANK_CANDIDATES` | inteiro `>= 1` |
+| `redis_url` | `redis://localhost:6379` | `REDIS_URL` | string |
+| `cache_ttl_s` | `86400` | `CACHE_TTL_S` | inteiro `>= 1` |
+| `cache_enabled` | `true` | `CACHE_ENABLED` | booleano |
 
 O nome da variável é o nome do campo, sem prefixo, com maiúsculas e minúsculas ignoradas. `qdrant_url` e `QDRANT_URL` são a mesma variável.
 
@@ -90,7 +95,7 @@ settings.dense_size = 384  # ValidationError
 
 A configuração muda na construção seguinte, por variável ou por argumento. A instância antiga permanece com os valores que tinha.
 
-Quem usa o objeto só lê. `ensure_collection` e `_require_compatible` leem `collection_name`, `dense_vector_name`, `sparse_vector_name` e `dense_size`. `init_collection`, `search_chunks` e o `store` leem `qdrant_url` e `collection_name` para falar com o Qdrant. `answer_question` lê `openai_api_key` e `llm_model` para montar o `ChatOpenAI`. `search_chunks` lê `rerank_candidates` para decidir quantos trechos fundidos pedir. `rerank.py` lê `reranker_model` e `embedding_threads`; `embeddings.py` lê `embedding_threads`. O trace não grava `qdrant_url` nem a chave: URL pode carregar segredo e `SecretStr` não serializa. Os nomes e o tamanho do vetor entram em `collection.init.started`; os nomes dos modelos entram em `generate.answered` e `rerank.completed`.
+Quem usa o objeto só lê. `ensure_collection` e `_require_compatible` leem `collection_name`, `dense_vector_name`, `sparse_vector_name` e `dense_size`. `init_collection`, `search_chunks` e o `store` leem `qdrant_url` e `collection_name` para falar com o Qdrant. `answer_question` lê `openai_api_key` e `llm_model` para montar o `ChatOpenAI`. `search_chunks` lê `rerank_candidates` para decidir quantos trechos fundidos pedir. `rerank.py` lê `reranker_model`, `embedding_threads` e `model_cache_dir`; `embeddings.py` lê `embedding_threads` e `model_cache_dir`. O trace não grava `qdrant_url` nem a chave: URL pode carregar segredo e `SecretStr` não serializa. Os nomes e o tamanho do vetor entram em `collection.init.started`; os nomes dos modelos entram em `generate.answered` e `rerank.completed`.
 
 ## O que cada campo faz na coleção
 
@@ -106,13 +111,23 @@ Quem usa o objeto só lê. `ensure_collection` e `_require_compatible` leem `col
 
 `embedding_threads` limita os núcleos do onnxruntime no embedding e no reranker. Vazio, o runtime usa todos os núcleos.
 
+`model_cache_dir` é onde o fastembed guarda os modelos baixados (~3 GB entre e5, BM25 e reranker). O default do fastembed é `/tmp/fastembed_cache`, que some no reboot e força o re-download de tudo na consulta seguinte; o padrão aqui é um diretório persistente do usuário.
+
 `openai_api_key` autentica a chamada ao LLM. Vazia, `answer_question` para antes da rede com a frase de orientação.
 
 `llm_model` é o modelo passado ao `ChatOpenAI`. Vale qualquer modelo de chat da OpenAI; a conta e o custo mudam, o contrato não.
 
+`llm_context_tokens` é o teto de tokens dos trechos no prompt. Sem ele, tabelas grandes estouram a cota de tokens por minuto da API (16 trechos pediram 50 mil onde o teto era 30 mil). O orçamento é descrito em [Answer.md](Answer.md).
+
 `reranker_model` é o cross-encoder carregado pelo `TextCrossEncoder` do fastembed. Trocar exige um modelo da lista de suportados do fastembed — `bge-reranker-v2-m3` não está nela.
 
 `rerank_candidates` é a profundidade da fusão RRF quando o rerank está ligado: a busca pede esse tanto de trechos e o cross-encoder corta no `limit` pedido.
+
+`redis_url` é o endereço do Redis. O padrão aponta para o serviço local do `compose.yaml`, porta `6379`.
+
+`cache_ttl_s` é o TTL das duas chaves de cache, em segundos. Resposta cacheada pode ficar velha se um PDF for reingerido; o TTL é o limite dessa janela.
+
+`cache_enabled` desliga o cache pela configuração. Com `false`, nem o Redis é consultado. A flag `--no-cache` da CLI faz o mesmo por invocação.
 
 ## Como acrescentar um campo
 

@@ -1,10 +1,15 @@
+import json
 import re
 import time
+from functools import cache
 
+import tiktoken
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, ConfigDict
 
+from eletric_motor.rag.cache import cache_get, cache_key, cache_set
+from eletric_motor.rag.chunk import Chunk
 from eletric_motor.rag.search import SearchFilters, SearchHit, search_chunks
 from eletric_motor.rag.settings import Settings
 from eletric_motor.rag.trace import (
@@ -17,21 +22,33 @@ from eletric_motor.rag.trace import (
     release_trace,
 )
 
+# Incrementar quando o contrato de saída mudar; entra na chave de cache de resposta.
+ANSWER_PROMPT_VERSION = 2
+
 _SYSTEM_PROMPT = (
     "Você responde perguntas sobre motores elétricos usando apenas os trechos "
     "numerados da documentação técnica fornecida. Regras: responda em "
-    "português; seja direto, entregando a resposta já na primeira frase; "
-    "baseie cada afirmação nos trechos e cite a fonte ao final da frase no "
-    "formato [n]; não use conhecimento fora dos trechos. Se o valor exato "
-    "pedido não estiver nos trechos, não se limite a dizer que falta: "
-    "explique o que a documentação oferece sobre o tema — como obter ou "
-    "calcular o valor, onde ele aparece — citando as fontes. Só diga que a "
-    "documentação não cobre o ponto quando nenhum trecho tiver relação com a "
-    "pergunta."
+    "português, em prosa contínua para leitura no terminal; não use "
+    "marcadores [n], listas numeradas de fontes nem cabeçalhos Markdown "
+    "(###) copiados dos trechos; não use conhecimento fora dos trechos. "
+    "Primeiro parágrafo: resposta direta à pergunta, já na primeira frase "
+    "quando couber. Parágrafos seguintes: defina, detalhe ou contextualize "
+    "com o que os trechos trazem (definições, símbolos, relações), "
+    "integrando o texto de forma natural — sem dizer “fonte 1” ou “trecho 2”. "
+    "Se o valor exato pedido não estiver nos trechos, não se limite a dizer "
+    "que falta: explique o que a documentação oferece — como obter ou calcular "
+    "o valor, onde aparece. Só diga que a documentação não cobre o ponto "
+    "quando nenhum trecho tiver relação com a pergunta. Normalize símbolos "
+    "quebrados nos trechos (ex.: P u → P_u) quando o sentido for claro."
 )
 
 
 _CITATION = re.compile(r"\[(\d+)\]")
+
+# Tabelas entram no prompt inteiras; sem teto, uma grade grande estoura a cota
+# de tokens da API. Acima disso, o trecho é truncado com marcador.
+_CHUNK_TOKEN_LIMIT = 2000
+_TRUNCATION_MARK = "\n[... trecho truncado ...]"
 
 
 class AnswerResult(BaseModel, frozen=True):
@@ -43,7 +60,7 @@ class AnswerResult(BaseModel, frozen=True):
 
     @property
     def cited_hits(self) -> tuple[SearchHit, ...]:
-        """Hits whose [n] number appears in the answer text, in answer order."""
+        """Hits whose [n] appears in the answer; empty when the model uses prose only."""
         order = {
             int(n): i for i, n in enumerate(_CITATION.findall(self.answer))
         }
@@ -61,6 +78,7 @@ def answer_question(
     filters: SearchFilters | None = None,
     limit: int = 16,
     rerank: bool = True,
+    use_cache: bool = True,
 ) -> AnswerResult:
     token = bind_trace()
     started = time.perf_counter()
@@ -72,9 +90,24 @@ def answer_question(
             "Configure OPENAI_API_KEY no ambiente ou no arquivo .env para "
             "gerar respostas."
         )
+    key = cache_key(
+        "answer",
+        question,
+        json.dumps(filters.active(), sort_keys=True),
+        str(limit),
+        str(rerank),
+        settings.llm_model,
+        str(ANSWER_PROMPT_VERSION),
+    )
+    cached = cache_get("answer", key, enabled=use_cache)
+    if cached is not None:
+        release_trace(token)
+        return AnswerResult.model_validate_json(cached)
     try:
-        result = search_chunks(question, filters, limit=limit, rerank=rerank)
-        answer = _generate(question, result.hits, settings)
+        result = search_chunks(
+            question, filters, limit=limit, rerank=rerank, use_cache=use_cache
+        )
+        answer, prompt_hits = _generate(question, result.hits, settings)
     except SystemExit:
         raise
     except Exception as exc:
@@ -88,18 +121,25 @@ def answer_question(
                 span="generate",
                 collection=settings.collection_name,
                 filters=filters.active() or None,
-                fused_hits=len(result.hits),
+                fused_hits=len(prompt_hits),
                 llm_model=settings.llm_model,
                 answer_chars=len(answer),
                 latency_ms=elapsed_ms(started),
             ),
         )
-        return AnswerResult(answer=answer, hits=result.hits, llm_model=settings.llm_model)
+        outcome = AnswerResult(
+            answer=answer, hits=prompt_hits, llm_model=settings.llm_model
+        )
+        cache_set("answer", key, outcome.model_dump_json(), enabled=use_cache)
+        return outcome
     finally:
         release_trace(token)
 
 
-def _generate(question: str, hits: tuple[SearchHit, ...], settings: Settings) -> str:
+def _generate(
+    question: str, hits: tuple[SearchHit, ...], settings: Settings
+) -> tuple[str, tuple[SearchHit, ...]]:
+    fitted = _fit_budget(hits, settings.llm_context_tokens)
     llm = ChatOpenAI(
         model=settings.llm_model,
         temperature=0,
@@ -107,23 +147,57 @@ def _generate(question: str, hits: tuple[SearchHit, ...], settings: Settings) ->
     )
     messages = [
         SystemMessage(content=_SYSTEM_PROMPT),
-        HumanMessage(content=_user_prompt(question, hits)),
+        HumanMessage(content=_user_prompt(question, fitted)),
     ]
     response = llm.invoke(messages)
-    return str(response.content)
+    return str(response.content), fitted
+
+
+def _fit_budget(hits: tuple[SearchHit, ...], budget: int) -> tuple[SearchHit, ...]:
+    """Keep the best hits that fit the token budget; truncate huge chunks."""
+    fitted: list[SearchHit] = []
+    spent = 0
+    for hit in hits:
+        chunk = hit.chunk
+        tokens = _encoder().encode(chunk.content)
+        if len(tokens) > _CHUNK_TOKEN_LIMIT:
+            chunk = chunk.model_copy(
+                update={
+                    "content": _encoder().decode(tokens[:_CHUNK_TOKEN_LIMIT])
+                    + _TRUNCATION_MARK
+                }
+            )
+        cost = len(_encoder().encode(_block(len(fitted) + 1, chunk)))
+        if spent + cost > budget:
+            break
+        spent += cost
+        fitted.append(SearchHit(score=hit.score, chunk=chunk))
+    return tuple(fitted)
 
 
 def _user_prompt(question: str, hits: tuple[SearchHit, ...]) -> str:
-    blocks = []
-    for rank, hit in enumerate(hits, start=1):
-        chunk = hit.chunk
-        section = " › ".join(chunk.section_path)
-        blocks.append(
-            f"[{rank}] {chunk.document_title} — {section} — p.{chunk.page}\n"
-            f"{chunk.content}"
-        )
-    sources = "\n\n".join(blocks)
-    return f"Pergunta: {question}\n\nTrechos da documentação:\n\n{sources}"
+    sources = "\n\n".join(
+        _block(rank, hit.chunk) for rank, hit in enumerate(hits, start=1)
+    )
+    return (
+        f"Pergunta: {question}\n\n"
+        "Trechos da documentação (referência interna; não cite [n] na resposta):\n\n"
+        f"{sources}\n\n"
+        "Escreva a resposta em um ou mais parágrafos de prosa, sem [n]."
+    )
+
+
+def _block(rank: int, chunk: Chunk) -> str:
+    section = " › ".join(chunk.section_path)
+    return (
+        f"[{rank}] {chunk.document_title} — {section} — p.{chunk.page}\n"
+        f"{chunk.content}"
+    )
+
+
+@cache
+def _encoder() -> tiktoken.Encoding:
+    return tiktoken.get_encoding("cl100k_base")
 
 
 def _log_failed(exc: BaseException, started: float, settings: Settings) -> None:

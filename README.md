@@ -7,14 +7,15 @@
 ![OpenAI](https://img.shields.io/badge/OpenAI-gpt--4o-412991?logo=openai&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
 
-RAG de documentação técnica de motores elétricos. Pergunte em português — o sistema busca nos PDFs do acervo (manuais, guias e catálogos WEG) e responde com citação da fonte, da seção e do trecho original.
+RAG de documentação técnica de motores elétricos. Pergunte em português — o sistema busca nos PDFs do acervo (manuais, guias e catálogos WEG) e responde em prosa contínua ancorada nos trechos recuperados.
 
 ## O que ele faz
 
-- **Ingere PDFs técnicos**: extrai texto e tabelas com Docling, corta em chunks por seção (prosa de 500–800 tokens, tabela inteira em um chunk) e grava no Qdrant com metadados (tipo de fonte, fabricante, tópico, idioma).
+- **Ingere PDFs técnicos**: extrai texto e tabelas com Docling, corta em chunks por seção (prosa até 800 tokens, sobreposição 100; tabela inteira em um chunk) e grava no Qdrant com metadados (tipo de fonte, fabricante, tópico, código de norma, idioma).
 - **Busca híbrida**: vetor denso (`intfloat/multilingual-e5-large`, 1024 dimensões) + vetor esparso (BM25) fundidos com RRF. Filtros por metadado quando a pergunta pede.
 - **Rerank**: cross-encoder local (`jina-reranker-v2-base-multilingual`) reordena os 24 trechos fundidos antes do corte — o trecho certo sobe sem precisar de limite alto.
-- **Responde com citação**: o LLM (gpt-4o) responde só com base nos trechos recuperados, cita `[n]` em cada afirmação e a CLI mostra o texto das fontes citadas — sem precisar abrir o PDF.
+- **Cache Redis**: pergunta repetida não reembeda, não reranqueia e não chama a API — a resposta vem do cache em milissegundos. Redis fora do ar não derruba nada.
+- **Responde em prosa**: o LLM (gpt-4o) sintetiza só com base nos trechos recuperados; a CLI imprime a resposta corrida e, com `--sources`, lista os trechos usados no prompt.
 - **Rastreável**: cada operação emite eventos JSON no stderr com `trace_id` único, da busca à resposta (ver [docs/Tracing.md](docs/Tracing.md)).
 - **Idempotente**: reingerir o mesmo PDF não duplica pontos; metadados mudados são atualizados sem reembedar.
 
@@ -23,7 +24,7 @@ RAG de documentação técnica de motores elétricos. Pergunte em português —
 ```text
 PDF ──► Docling (Markdown) ──► chunk por seção ──► embeddings ──► Qdrant
                                       │              dense + sparse
-pergunta ──► busca híbrida (RRF) ──► rerank ──► 16 trechos ──► gpt-4o ──► resposta + fontes
+pergunta ──► busca híbrida (RRF) ──► rerank ──► 16 trechos ──► gpt-4o ──► resposta em prosa (--sources: trechos)
                  │                                                  │
                  └────────── trace JSON no stderr (trace_id) ◄──────┘
 ```
@@ -31,7 +32,7 @@ pergunta ──► busca híbrida (RRF) ──► rerank ──► 16 trechos �
 ## Estrutura
 
 ```text
-├── compose.yaml              # Qdrant local
+├── compose.yaml              # Qdrant e Redis locais
 ├── pyproject.toml            # Python 3.13+, dependências via uv
 ├── data/
 │   ├── weg/                  # PDFs WEG (não versionados)
@@ -46,7 +47,9 @@ pergunta ──► busca híbrida (RRF) ──► rerank ──► 16 trechos �
 │       ├── embeddings.py     # fastembed: e5-large denso + BM25 esparso
 │       ├── store.py          # Upsert idempotente, refresh de payload
 │       ├── search.py         # Busca híbrida com fusão RRF
-│       ├── answer.py         # Prompt, chamada ao LLM, fontes citadas
+│       ├── rerank.py         # Cross-encoder que reordena os trechos
+│       ├── answer.py         # Prompt, chamada ao LLM, prosa e cache de resposta
+│       ├── cache.py          # Cache Redis de embedding e resposta
 │       ├── settings.py       # Configuração via ambiente/.env
 │       └── trace.py          # Log JSON estruturado
 └── tasks/                    # Specs de cada fase implementada
@@ -58,6 +61,7 @@ pergunta ──► busca híbrida (RRF) ──► rerank ──► 16 trechos �
 |---|---|
 | Python 3.13 + uv | Linguagem e gerenciador de pacotes |
 | Qdrant (Docker) | Banco vetorial, coleção híbrida densa + esparsa |
+| Redis (Docker) | Cache de embedding e de resposta |
 | Docling | Extração de PDF para Markdown (tabelas em modo fast) |
 | fastembed | Embeddings locais: e5-large (denso) e BM25 (esparso) |
 | LangChain + langchain-openai | Orquestração e chamada ao gpt-4o |
@@ -66,7 +70,7 @@ pergunta ──► busca híbrida (RRF) ──► rerank ──► 16 trechos �
 ## Pré-requisitos
 
 - Python 3.13+ e [uv](https://docs.astral.sh/uv/)
-- Docker (para o Qdrant)
+- Docker (Qdrant e Redis sobem pelo `compose.yaml`)
 - Chave da OpenAI (só para o comando `answer`)
 
 ## Como rodar
@@ -75,7 +79,7 @@ pergunta ──► busca híbrida (RRF) ──► rerank ──► 16 trechos �
 # 1. Instalar dependências
 uv sync
 
-# 2. Subir o Qdrant
+# 2. Subir Qdrant e Redis
 docker compose up -d
 
 # 3. Configurar a chave (para respostas com LLM)
@@ -87,7 +91,7 @@ uv run eletric-motor init-collection
 # 5. Ingerir um PDF
 uv run eletric-motor ingest data/weg/weg-manual-geral-iom-50033244.pdf
 
-# 6. Perguntar
+# 6. Perguntar (adicione --sources para ver os trechos usados no prompt)
 uv run eletric-motor answer "como dimensionar condutores para motor trifásico"
 ```
 
@@ -98,12 +102,13 @@ uv run eletric-motor answer "como dimensionar condutores para motor trifásico"
 | `init-collection` | Cria ou confere a coleção híbrida e os índices de payload |
 | `ingest CAMINHO` | Extrai um PDF, corta em chunks e grava na coleção |
 | `query PERGUNTA` | Lista os trechos mais relevantes (sem LLM, não gasta API) |
-| `answer PERGUNTA` | Responde com o LLM e lista as fontes citadas com o texto |
+| `answer PERGUNTA` | Responde com o LLM em prosa (`--sources` lista trechos do prompt) |
 
-`query` e `answer` aceitam filtros: `--source-type manual|guia`, `--manufacturer weg`, `--topic instalacao`, `--language pt-BR`, `--limit N` (padrão 8 no `query`, 16 no `answer`). O `answer` reranqueia por padrão (`--no-rerank` desliga); o `query` mostra a busca crua, a menos que `--rerank` seja passado.
+`query` e `answer` aceitam filtros: `--source-type manual|guia`, `--manufacturer weg`, `--topic instalacao`, `--norm-code 5410`, `--language pt-BR`, `--limit N` (padrão 8 no `query`, 16 no `answer`). O `answer` reranqueia por padrão (`--no-rerank` desliga); o `query` mostra a busca crua, a menos que `--rerank` seja passado. Ambos usam o cache Redis por padrão (`--no-cache` desliga). Só no `answer`: `--sources` imprime, após a resposta, os trechos que foram ao prompt (auditoria).
 
 ```bash
 uv run eletric-motor answer "como calcular a corrente de rotor bloqueado" --source-type guia
+uv run eletric-motor answer "requisitos da NBR 5410 para motores" --norm-code 5410 --sources
 ```
 
 ## Configuração
@@ -114,11 +119,16 @@ Variáveis de ambiente ou arquivo `.env` (não versionado):
 |---|---|---|
 | `OPENAI_API_KEY` | — | Chave da OpenAI (obrigatória para `answer`) |
 | `LLM_MODEL` | `gpt-4o` | Modelo da resposta |
+| `LLM_CONTEXT_TOKENS` | `12000` | Teto de tokens dos trechos no prompt |
 | `QDRANT_URL` | `http://localhost:6333` | Endereço do Qdrant |
 | `QDRANT_COLLECTION` | `eletric_motor` | Nome da coleção |
 | `EMBEDDING_THREADS` | todos os núcleos | Limite de CPU do embedding e do reranker |
+| `MODEL_CACHE_DIR` | `~/.cache/fastembed` | Onde os ~3 GB de modelos ficam salvos |
 | `RERANKER_MODEL` | `jinaai/jina-reranker-v2-base-multilingual` | Cross-encoder do rerank |
 | `RERANK_CANDIDATES` | `24` | Trechos fundidos enviados ao reranker |
+| `REDIS_URL` | `redis://localhost:6379` | Endereço do Redis |
+| `CACHE_TTL_S` | `86400` | TTL do cache em segundos |
+| `CACHE_ENABLED` | `true` | `false` desliga o cache |
 
 Referência completa em [docs/Settings.md](docs/Settings.md).
 
@@ -128,7 +138,7 @@ Cada módulo de `src/eletric_motor/rag/` tem sua referência em `docs/`, na orde
 
 [Collection](docs/Collection.md) → [Ingest](docs/Ingest.md) → [Chunk](docs/Chunk.md) → [Embeddings](docs/Embeddings.md) → [Store](docs/Store.md) → [Search](docs/Search.md) → [Rerank](docs/Rerank.md) → [Answer](docs/Answer.md)
 
-Transversais: [Settings](docs/Settings.md) (configuração) e [Tracing](docs/Tracing.md) (log estruturado).
+Transversais: [Settings](docs/Settings.md) (configuração), [Tracing](docs/Tracing.md) (log estruturado) e [Cache](docs/Cache.md) (Redis).
 
 ## Observabilidade
 
@@ -138,15 +148,35 @@ A resposta vai para o stdout; o trace JSON vai para o stderr. Para inspecionar:
 uv run eletric-motor answer "..." 2> trace.log
 ```
 
-Cada execução gera eventos com o mesmo `trace_id`: `retrieve.hybrid.completed` (busca) e `generate.answered` (resposta), com contagens, filtros e latência. Formato e campos em [docs/Tracing.md](docs/Tracing.md).
+Cada execução usa um `trace_id` único. Em um `answer` completo (sem hit de cache de resposta), o stderr costuma trazer `cache.lookup`, `retrieve.hybrid.completed`, `rerank.completed` e `generate.answered`, com contagens, filtros e latência. Se a resposta vier do Redis (`cache_scope=answer`, `cache_hit=true`), só aparece `cache.lookup` — não há retrieve nem generate naquela execução. O `query` emite retrieve (e rerank, se `--rerank`). Formato e campos em [docs/Tracing.md](docs/Tracing.md).
+
+## Cache
+
+Para ver o cache em ação, rode a mesma pergunta duas vezes e observe o stderr: na segunda, `cache.lookup` vem com `"cache_hit": true` e a resposta sai em segundos, sem chamar a API.
+
+```bash
+# Inspecionar as chaves e o TTL restante
+docker compose exec redis redis-cli KEYS '*'
+docker compose exec redis redis-cli TTL "answer:<hash>"
+
+# Limpar o cache (força miss na próxima execução)
+docker compose exec redis redis-cli FLUSHALL
+
+# Resiliência: com o Redis parado, tudo funciona sem cache (1 warning no trace)
+docker compose stop redis
+uv run eletric-motor query "o que é fator de serviço"
+docker compose start redis
+```
+
+Detalhes em [docs/Cache.md](docs/Cache.md).
 
 ## Roadmap
 
 - [x] Coleção híbrida no Qdrant
 - [x] Ingestão de PDFs (Docling, chunking, dois vetores)
 - [x] Consulta híbrida com filtro de metadado
-- [x] Resposta do LLM com citação de fonte e seção
-- [ ] Redis: cache de embedding e de resposta
+- [x] Resposta do LLM em prosa ancorada no acervo
+- [x] Redis: cache de embedding e de resposta
 - [x] Reranker `jina-reranker-v2-base-multilingual` (cross-encoder local via fastembed)
 - [ ] MCP: `calcular_corrente_nominal` e `calcular_queda_tensao`
 

@@ -44,3 +44,11 @@ Verificação: uma execução com sucesso emite `retrieve.hybrid.completed` e `g
 ## Critério de pronto desta task
 
 As três linhas da tabela de fases estão `concluída`. A resposta cita fonte, seção e página. Nenhuma chave foi commitada no Git.
+
+## Notas da execução
+
+- **429 por prompt grande**: chunk de tabela é a tabela inteira; 16 trechos com grades grandes pediram 50 mil tokens e a org tinha teto de 30 mil TPM — retry nenhum resolveria. Correção: orçamento de tokens no prompt (`_fit_budget` em `answer.py`): trecho acima de 2000 tokens é truncado com marcador e a lista para no teto `llm_context_tokens` (padrão 12000, configurável). `AnswerResult.hits` passou a guardar só os trechos enviados, para a numeração das fontes bater com o prompt.
+- **Prompt direto**: a primeira versão respondia "a documentação não cobre" com facilidade demais. O prompt passou a exigir síntese do que os trechos oferecem (como obter ou calcular o valor) antes de declarar falta de cobertura.
+- **Fontes sem página**: a saída da CLI lista só as fontes citadas, com o trecho do texto; página saiu da listagem porque o usuário não tem o PDF.
+- **Formato substituído (task 007)**: citação inline `[n]` + bloco `Fontes citadas:` deu lugar à resposta em prosa contínua; `--sources` lista trechos do prompt para auditoria.
+- **Limite 16**: o `answer` usa 16 trechos por padrão (o dobro do `query`); com 8, trechos-chave ficavam de fora. Depois do reranker (task 005) e do orçamento de tokens, o limite alto ficou barato e seguro.

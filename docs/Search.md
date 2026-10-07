@@ -18,7 +18,7 @@ Este arquivo é a descrição do comportamento implementado. Mudou o código, at
 ```text
 search_chunks                bind_trace, eventos, SystemExit em português
   _search
-    embed da pergunta        denso com "query: ", esparso com o texto cru
+    _question_vectors        cache Redis primeiro; miss embeda e grava
     query_points             prefetch 40 denso + 40 esparso, fusão RRF
     filtro de payload        só quando a pergunta pede
   _apply_rerank              opcional: cross-encoder nos candidatos
@@ -33,6 +33,8 @@ search_chunks                bind_trace, eventos, SystemExit em português
 ## A consulta
 
 Cada braço faz prefetch de 40 e a fusão RRF ordena o resultado. O denso recebe a pergunta com o prefixo `query: ` do e5; o esparso recebe o texto cru (BM25 é lexical). O timeout do cliente é 60 s: a consulta compete por CPU com o embedding local.
+
+O embedding da pergunta passa pelo cache Redis ([Cache.md](Cache.md)): pergunta repetida não roda o modelo e o retrieve cai de segundos para dezenas de milissegundos. `use_cache=False` (a flag `--no-cache` da CLI) pula a consulta ao Redis.
 
 O payload de cada ponto é validado com `Chunk.model_validate` — ponto com payload fora do contrato falha aqui, não mais adiante.
 

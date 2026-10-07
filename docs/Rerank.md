@@ -20,7 +20,7 @@ A busca híbrida usa bi-encoders: pergunta e trecho viram vetores separados e a 
 
 `jinaai/jina-reranker-v2-base-multilingual`, multilíngue como o acervo (PT/EN/ES). O roadmap original pedia `bge-reranker-v2-m3`, que o fastembed não suporta — usá-lo puxaria `sentence-transformers` + PyTorch e quebraria o padrão de ONNX puro. A decisão está em `tasks/005_reranker.md`.
 
-O loader segue o padrão de [Embeddings.md](Embeddings.md): `@cache`, arena de CPU desligada e `EMBEDDING_THREADS` respeitado. O primeiro uso baixa ~1,1 GB.
+O loader segue o padrão de [Embeddings.md](Embeddings.md): `@cache`, arena de CPU desligada, `EMBEDDING_THREADS` respeitado e download em `model_cache_dir` (diretório persistente, não `/tmp`). O primeiro uso baixa ~1,1 GB.
 
 ## rerank_hits
 

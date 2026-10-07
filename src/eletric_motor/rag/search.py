@@ -1,9 +1,11 @@
+import json
 import time
 
 from pydantic import BaseModel, ConfigDict, Field
 from qdrant_client import QdrantClient, models
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 
+from eletric_motor.rag.cache import cache_get, cache_key, cache_set
 from eletric_motor.rag.chunk import Chunk
 from eletric_motor.rag.embeddings import QUERY_PREFIX, dense_model, sparse_model
 from eletric_motor.rag.settings import Settings
@@ -56,6 +58,7 @@ def search_chunks(
     filters: SearchFilters | None = None,
     limit: int = 8,
     rerank: bool = False,
+    use_cache: bool = True,
 ) -> SearchResult:
     token = bind_trace()
     started = time.perf_counter()
@@ -64,7 +67,7 @@ def search_chunks(
     fetch = max(limit, settings.rerank_candidates) if rerank else limit
     retrieved = False
     try:
-        result = _search(question, filters, fetch, settings)
+        result = _search(question, filters, fetch, settings, use_cache)
         retrieved = True
         log_event(
             "retrieve.hybrid.completed",
@@ -111,22 +114,21 @@ def _search(
     filters: SearchFilters,
     limit: int,
     settings: Settings,
+    use_cache: bool,
 ) -> SearchResult:
-    # BM25 é lexical: o esparso recebe a pergunta crua, sem o prefixo do e5.
-    dense = next(iter(dense_model().embed([QUERY_PREFIX + question])))
-    sparse = next(iter(sparse_model().embed([question])))
+    dense, sparse_indices, sparse_values = _question_vectors(question, use_cache)
 
     client = QdrantClient(url=settings.qdrant_url, timeout=_QDRANT_TIMEOUT_S)
     response = client.query_points(
         settings.collection_name,
         prefetch=[
             models.Prefetch(
-                query=dense.tolist(), using=settings.dense_vector_name, limit=_PREFETCH
+                query=dense, using=settings.dense_vector_name, limit=_PREFETCH
             ),
             models.Prefetch(
                 query=models.SparseVector(
-                    indices=sparse.indices.tolist(),
-                    values=sparse.values.tolist(),
+                    indices=sparse_indices,
+                    values=sparse_values,
                 ),
                 using=settings.sparse_vector_name,
                 limit=_PREFETCH,
@@ -143,6 +145,35 @@ def _search(
     )
     # O cliente não expõe a contagem por braço; o log registra a profundidade pedida.
     return SearchResult(hits=hits, dense_hits=_PREFETCH, sparse_hits=_PREFETCH)
+
+
+def _question_vectors(
+    question: str, use_cache: bool
+) -> tuple[list[float], list[int], list[float]]:
+    key = cache_key("query", question)
+    cached = cache_get("embedding", key, enabled=use_cache)
+    if cached is not None:
+        data = json.loads(cached)
+        return data["dense"], data["sparse_indices"], data["sparse_values"]
+    # BM25 é lexical: o esparso recebe a pergunta crua, sem o prefixo do e5.
+    dense = next(iter(dense_model().embed([QUERY_PREFIX + question])))
+    sparse = next(iter(sparse_model().embed([question])))
+    dense_list = dense.tolist()
+    sparse_indices = sparse.indices.tolist()
+    sparse_values = sparse.values.tolist()
+    cache_set(
+        "embedding",
+        key,
+        json.dumps(
+            {
+                "dense": dense_list,
+                "sparse_indices": sparse_indices,
+                "sparse_values": sparse_values,
+            }
+        ),
+        enabled=use_cache,
+    )
+    return dense_list, sparse_indices, sparse_values
 
 
 def _apply_rerank(

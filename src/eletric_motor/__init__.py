@@ -29,7 +29,13 @@ def main() -> None:
         action="store_true",
         help="Reordena os trechos com o cross-encoder (desligado por padrão)",
     )
-    answer = sub.add_parser("answer", help="Responde a pergunta com citação das fontes")
+    query.add_argument(
+        "--no-cache",
+        dest="cache",
+        action="store_false",
+        help="Não usar o cache Redis de embeddings",
+    )
+    answer = sub.add_parser("answer", help="Responde a pergunta em prosa com base no acervo")
     answer.add_argument("question", help="Pergunta em linguagem natural")
     answer.add_argument("--limit", type=int, default=16, help="Quantos trechos usar (padrão 16)")
     answer.add_argument("--source-type", help="Filtra por tipo de fonte (manual, norma, guia)")
@@ -42,6 +48,17 @@ def main() -> None:
         dest="rerank",
         action="store_false",
         help="Não reordenar os trechos com o cross-encoder",
+    )
+    answer.add_argument(
+        "--no-cache",
+        dest="cache",
+        action="store_false",
+        help="Não usar o cache Redis de respostas",
+    )
+    answer.add_argument(
+        "--sources",
+        action="store_true",
+        help="Após a resposta, lista os trechos usados no prompt",
     )
     args = parser.parse_args()
     if args.command == "init-collection":
@@ -70,7 +87,9 @@ def main() -> None:
             norm_code=args.norm_code,
             language=args.language,
         )
-        result = search_chunks(args.question, filters, limit=args.limit, rerank=args.rerank)
+        result = search_chunks(
+            args.question, filters, limit=args.limit, rerank=args.rerank, use_cache=args.cache
+        )
         print(f"{len(result.hits)} trechos para: {args.question}")
         for rank, hit in enumerate(result.hits, start=1):
             chunk = hit.chunk
@@ -81,8 +100,7 @@ def main() -> None:
                 f"{kind} — score {hit.score:.3f}"
             )
             print(f"    {section}")
-            snippet = " ".join(chunk.content.split())[:200]
-            print(f"    {snippet}...")
+            print(f"    {_snippet(chunk.content, 200)}")
     elif args.command == "answer":
         filters = SearchFilters(
             source_type=args.source_type,
@@ -91,20 +109,30 @@ def main() -> None:
             norm_code=args.norm_code,
             language=args.language,
         )
-        result = answer_question(args.question, filters, limit=args.limit, rerank=args.rerank)
+        result = answer_question(
+            args.question, filters, limit=args.limit, rerank=args.rerank, use_cache=args.cache
+        )
         print(result.answer)
-        cited = result.cited_hits
-        if not cited:
-            print("\nA resposta não citou trechos da documentação.")
-        else:
-            print("\nFontes citadas:")
-            for hit in cited:
+        if args.sources:
+            print("\nTrechos usados no prompt:")
+            for rank, hit in enumerate(result.hits, start=1):
                 chunk = hit.chunk
-                rank = result.hits.index(hit) + 1
                 section = " › ".join(chunk.section_path)
                 print(f"\n[{rank}] {chunk.document_title} — {section}")
-                snippet = " ".join(chunk.content.split())[:500]
-                print(f"    {snippet}...")
+                print(f"    {_snippet(chunk.content, 500)}")
+
+
+def _snippet(text: str, limit: int) -> str:
+    """Normalize whitespace and cut at the last sentence boundary within limit."""
+    normalized = " ".join(text.split())
+    if len(normalized) <= limit:
+        return normalized
+    cut = normalized[:limit]
+    for sep in (". ", "! ", "? "):
+        pos = cut.rfind(sep)
+        if pos >= limit // 2:
+            return cut[: pos + 1] + " ..."
+    return cut + " ..."
 
 
 def cli() -> None:

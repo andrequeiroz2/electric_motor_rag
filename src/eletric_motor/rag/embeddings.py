@@ -19,14 +19,17 @@ _ARENA_OFF = {"enable_cpu_mem_arena": False}
 
 @cache
 def dense_model() -> TextEmbedding:
-    return TextEmbedding(model_name=DENSE_MODEL, **_ARENA_OFF, **_threads())
+    return TextEmbedding(model_name=DENSE_MODEL, **_ARENA_OFF, **_options())
 
 
 @cache
 def sparse_model() -> SparseTextEmbedding:
-    return SparseTextEmbedding(model_name=SPARSE_MODEL, **_ARENA_OFF, **_threads())
+    return SparseTextEmbedding(model_name=SPARSE_MODEL, **_ARENA_OFF, **_options())
 
 
-def _threads() -> dict[str, int]:
-    threads = Settings().embedding_threads
-    return {} if threads is None else {"threads": threads}
+def _options() -> dict[str, int | str]:
+    settings = Settings()
+    options: dict[str, int | str] = {"cache_dir": str(settings.model_cache_dir)}
+    if settings.embedding_threads is not None:
+        options["threads"] = settings.embedding_threads
+    return options

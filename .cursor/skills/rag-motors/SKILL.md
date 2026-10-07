@@ -16,8 +16,8 @@ Implemente só a fase que o usuário pediu. Não antecipe Redis, reranker nem MC
 1. Coleção `motores` no Qdrant — feita.
 2. Ingestão de um PDF: Docling, chunk, dois vetores.
 3. Consulta híbrida com filtro de metadado.
-4. Resposta do LLM com citação de fonte, seção e trecho do texto. Página não aparece: o usuário não tem o PDF.
-5. Redis: cache de embedding e de resposta.
+4. Resposta do LLM em prosa contínua, ancorada nos trechos. `--sources` na CLI lista trechos do prompt; página não aparece na saída padrão.
+5. Redis: cache de embedding e de resposta — feita. Cache é otimização: Redis fora do ar não derruba a CLI.
 6. Reranker `jinaai/jina-reranker-v2-base-multilingual` via fastembed (o `bge-reranker-v2-m3` do plano original não é suportado pelo fastembed; usá-lo puxaria PyTorch).
 7. MCP: `calcular_corrente_nominal` e `calcular_queda_tensao`.
 
@@ -42,7 +42,7 @@ Nome padrão `motores`. Vetor `dense` cosseno 1024. Vetor `sparse` com modificad
 
 Docling gera Markdown. O primeiro corte segue títulos. Prosa acima do limite passa pelo splitter recursivo, em tokens.
 
-- Prosa: 500–800 tokens, sobreposição 80–120.
+- Prosa: até 800 tokens, sobreposição 100 (`chunk.py`).
 - Tabela: um chunk inteiro, com o título da seção no início. Sem sobreposição.
 - Cada ponto guarda `section_path`, `page`, `document_title`, `content_hash`.
 
@@ -60,4 +60,4 @@ A taxonomia técnica é filtro, não árvore de pastas. Norma ABNT só entra com
 
 ## Consulta
 
-Padrão: `RetrievalMode.HYBRID`, prefetch 40 densos e 40 esparsos, fusão RRF, 8 trechos (16 na resposta do LLM). Filtro de payload quando a pergunta cita norma, fabricante ou tópico. Se o modelo denso falhar, a mesma coleção responde em modo esparso. A resposta cita fonte e seção, e lista só os trechos citados, com o texto de cada um.
+Padrão: `RetrievalMode.HYBRID`, prefetch 40 densos e 40 esparsos, fusão RRF, 8 trechos (16 na resposta do LLM). Filtro de payload quando a pergunta cita norma, fabricante ou tópico. Se o modelo denso falhar, a mesma coleção responde em modo esparso. A resposta integra o conteúdo dos trechos em prosa; auditoria opcional com `--sources`.

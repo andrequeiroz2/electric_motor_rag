@@ -12,7 +12,7 @@ _ARENA_OFF = {"enable_cpu_mem_arena": False}
 @cache
 def reranker_model() -> TextCrossEncoder:
     return TextCrossEncoder(
-        model_name=Settings().reranker_model, **_ARENA_OFF, **_threads()
+        model_name=Settings().reranker_model, **_ARENA_OFF, **_options()
     )
 
 
@@ -30,6 +30,9 @@ def rerank_hits(
     )
 
 
-def _threads() -> dict[str, int]:
-    threads = Settings().embedding_threads
-    return {} if threads is None else {"threads": threads}
+def _options() -> dict[str, int | str]:
+    settings = Settings()
+    options: dict[str, int | str] = {"cache_dir": str(settings.model_cache_dir)}
+    if settings.embedding_threads is not None:
+        options["threads"] = settings.embedding_threads
+    return options

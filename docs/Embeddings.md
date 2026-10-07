@@ -36,3 +36,5 @@ Os dois loaders passam `enable_cpu_mem_arena=False`. A arena do onnxruntime rese
 ## Cache
 
 `@cache` segura a instância: o modelo é baixado e carregado uma vez por processo, na primeira chamada. Quem chama `dense_model()` dez vezes recebe o mesmo objeto.
+
+O download em disco vai para `model_cache_dir` (padrão `~/.cache/fastembed`), passado como `cache_dir` ao fastembed. Sem isso o fastembed usaria `/tmp/fastembed_cache`, que o sistema apaga no reboot — e os ~3 GB de modelos seriam baixados de novo na consulta seguinte.
