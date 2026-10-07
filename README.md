@@ -21,13 +21,31 @@ RAG de documentação técnica de motores elétricos. Pergunte em português —
 
 ## Arquitetura
 
-```text
-PDF ──► Docling (Markdown) ──► chunk por seção ──► embeddings ──► Qdrant
-                                      │              dense + sparse
-pergunta ──► busca híbrida (RRF) ──► rerank ──► 16 trechos ──► gpt-4o ──► resposta em prosa (--sources: trechos)
-                 │                                                  │
-                 └────────── trace JSON no stderr (trace_id) ◄──────┘
+Há **dois fluxos**: ingestão grava PDFs no Qdrant; consulta lê a coleção e responde. O `query` só lista trechos (sem LLM). O `answer` reranqueia, monta o prompt e chama o gpt-4o. Redis cacheia embedding da pergunta e resposta pronta — ver [Cache](#cache).
+
+```mermaid
+flowchart TB
+  subgraph ingest["Ingestão · comando ingest"]
+    direction LR
+    pdf[PDF] --> docling[Docling → Markdown]
+    docling --> chunk[Chunk por seção]
+    chunk --> embed["Embeddings locais<br/>e5 denso + BM25 esparso"]
+    embed --> qdrant[(Qdrant)]
+  end
+
+  subgraph answer["Resposta · comando answer"]
+    direction LR
+    pergunta[Pergunta] --> busca["Busca híbrida<br/>RRF · prefetch 40+40"]
+    busca --> rerank[Rerank · até 24 candidatos]
+    rerank --> prompt["Prompt · até 16 trechos<br/>teto LLM_CONTEXT_TOKENS"]
+    prompt --> llm[gpt-4o]
+    llm --> stdout["stdout: prosa<br/>--sources: trechos do prompt"]
+  end
+
+  qdrant --> busca
 ```
+
+**Trace:** cada execução emite linhas JSON no **stderr** com o mesmo `trace_id` (cache, retrieve, rerank, generate — ou só cache em hit de resposta). Detalhes em [Observabilidade](#observabilidade).
 
 ## Estrutura
 
