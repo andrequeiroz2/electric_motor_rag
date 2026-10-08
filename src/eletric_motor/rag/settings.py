@@ -41,3 +41,5 @@ class Settings(BaseSettings, frozen=True):
     redis_url: str = "redis://localhost:6379"
     cache_ttl_s: int = Field(default=86400, ge=1)
     cache_enabled: bool = True
+    # Cliente MCP (Fase 3). Ex.: http://127.0.0.1:8000/mcp
+    mcp_http_url: str | None = None

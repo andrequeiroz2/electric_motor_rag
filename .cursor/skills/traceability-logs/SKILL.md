@@ -28,6 +28,8 @@ Use `trace_scope` e `log_event` em `eletric_motor.rag.trace`, com o `logging` da
 
 `error_file`, `error_line` e `error_function` são o último frame dentro do pacote `eletric_motor`. A stack continua fora do JSON. Detalhe em docs/Tracing.md.
 
+`mcp_tool_count` e `mcp_tool_names` aparecem em `generate.mcp.tools_called`.
+
 ## O que não entra no log
 
 - Chave de API, segredo ou connection string.
@@ -49,6 +51,7 @@ O nome é contrato. Não o renomeie ao mudar a mensagem.
 - `retrieve.hybrid.completed`
 - `retrieve.hybrid.failed`
 - `generate.answered`
+- `generate.mcp.tools_called` — tools MCP no `answer` (`mcp_tool_count`, `mcp_tool_names`)
 - `generate.failed`
 
 ## Exemplo

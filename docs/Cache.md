@@ -27,9 +27,9 @@ _mark_unavailable        warning único e cache desligado no processo
 | Escopo | Onde | Chave | Valor |
 |---|---|---|---|
 | `embedding` | `_question_vectors` em [Search.md](Search.md) | pergunta | JSON com o denso (lista) e o esparso (índices + valores) |
-| `answer` | `answer_question` em [Answer.md](Answer.md) | pergunta + filtros + limite + rerank + modelo | `AnswerResult` serializado |
+| `answer` | `answer_question` em [Answer.md](Answer.md) | pergunta + filtros + limite + rerank + modelo + versão do prompt + MCP (URL e formula set) | `AnswerResult` serializado |
 
-O embedding da pergunta é determinístico por modelo, então a chave é só o texto. A resposta depende de tudo o que muda o resultado: filtros, limite, rerank ligado, `llm_model` e `ANSWER_PROMPT_VERSION` (em `answer.py`) entram na chave.
+O embedding da pergunta é determinístico por modelo, então a chave é só o texto. A resposta depende de tudo o que muda o resultado: filtros, limite, rerank ligado, `llm_model`, `ANSWER_PROMPT_VERSION` e, se `MCP_HTTP_URL` estiver definida, a URL mais `MCP_FORMULA_SET_VERSION` (em `mcp_answer.py`) entram na chave.
 
 ## Falha e desligamento
 

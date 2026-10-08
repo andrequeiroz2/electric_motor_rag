@@ -19,7 +19,7 @@ Implemente só a fase que o usuário pediu. Não antecipe Redis, reranker nem MC
 4. Resposta do LLM em prosa contínua, ancorada nos trechos. `--sources` na CLI lista trechos do prompt; página não aparece na saída padrão.
 5. Redis: cache de embedding e de resposta — feita. Cache é otimização: Redis fora do ar não derruba a CLI.
 6. Reranker `jinaai/jina-reranker-v2-base-multilingual` via fastembed (o `bge-reranker-v2-m3` do plano original não é suportado pelo fastembed; usá-lo puxaria PyTorch).
-7. MCP: `calcular_corrente_nominal` e `calcular_queda_tensao`.
+7. MCP — feito: workspace `mcp/` (`eletric-motor-mcp`), HTTP, 5 tools (incl. `calcular_queda_linha`); `MCP_HTTP_URL` no `answer`. Padrão [mcp-sport](https://github.com/andrequeiroz2/mcp-sport).
 
 ## Stack fixa
 

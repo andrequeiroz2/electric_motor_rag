@@ -53,6 +53,8 @@ class TraceContext(BaseModel, frozen=True):
     rerank_candidates: int | None = Field(default=None, ge=0)
     cache_scope: str | None = None
     cache_hit: bool | None = None
+    mcp_tool_count: int | None = Field(default=None, ge=0)
+    mcp_tool_names: tuple[str, ...] | None = None
     latency_ms: int | None = None
     error_type: str | None = None
     error_message: str | None = None

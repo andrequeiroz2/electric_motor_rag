@@ -1,0 +1,22 @@
+[project]
+name = "eletric-motor-mcp"
+version = "0.1.0"
+description = "MCP de cálculos determinísticos para motores elétricos (WEG / NBR 5410)"
+readme = "README.md"
+authors = [
+    { name = "andrequeiroz2", email = "andrequeiroz.com@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "fastmcp>=4.0.5",
+    "pydantic>=2",
+    "pydantic-settings>=2",
+    "uvicorn>=0.34",
+]
+
+[project.scripts]
+eletric-motor-mcp = "eletric_motor_mcp:main"
+
+[build-system]
+requires = ["uv_build>=0.12.13,<0.13.0"]
+build-backend = "uv_build"

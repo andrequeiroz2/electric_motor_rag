@@ -60,6 +60,16 @@ _TOP_LEVELS: dict[str, tuple[str, ...]] = {
         "eficiência e confiabilidade",
         "lei de eficiência energética",
     ),
+    "NBR-5410": (
+        "norma brasileira",
+        "abnt nbr",
+        "5410",
+        "instalações elétricas de baixa tensão",
+        "electrical installations of buildings",
+        "índice",
+        "sumário",
+        "prefácio",
+    ),
 }
 
 

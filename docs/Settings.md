@@ -71,6 +71,7 @@ Essa tupla não é campo de `Settings`. Nenhuma variável de ambiente a substitu
 | `reranker_model` | `jinaai/jina-reranker-v2-base-multilingual` | `RERANKER_MODEL` | string |
 | `rerank_candidates` | `24` | `RERANK_CANDIDATES` | inteiro `>= 1` |
 | `redis_url` | `redis://localhost:6379` | `REDIS_URL` | string |
+| `mcp_http_url` | vazio | `MCP_HTTP_URL` | URL Streamable HTTP do servidor MCP (ex. `http://127.0.0.1:8000/mcp`); se definida, `answer` chama tools via HTTP |
 | `cache_ttl_s` | `86400` | `CACHE_TTL_S` | inteiro `>= 1` |
 | `cache_enabled` | `true` | `CACHE_ENABLED` | booleano |
 
@@ -95,7 +96,7 @@ settings.dense_size = 384  # ValidationError
 
 A configuração muda na construção seguinte, por variável ou por argumento. A instância antiga permanece com os valores que tinha.
 
-Quem usa o objeto só lê. `ensure_collection` e `_require_compatible` leem `collection_name`, `dense_vector_name`, `sparse_vector_name` e `dense_size`. `init_collection`, `search_chunks` e o `store` leem `qdrant_url` e `collection_name` para falar com o Qdrant. `answer_question` lê `openai_api_key` e `llm_model` para montar o `ChatOpenAI`. `search_chunks` lê `rerank_candidates` para decidir quantos trechos fundidos pedir. `rerank.py` lê `reranker_model`, `embedding_threads` e `model_cache_dir`; `embeddings.py` lê `embedding_threads` e `model_cache_dir`. O trace não grava `qdrant_url` nem a chave: URL pode carregar segredo e `SecretStr` não serializa. Os nomes e o tamanho do vetor entram em `collection.init.started`; os nomes dos modelos entram em `generate.answered` e `rerank.completed`.
+Quem usa o objeto só lê. `ensure_collection` e `_require_compatible` leem `collection_name`, `dense_vector_name`, `sparse_vector_name` e `dense_size`. `init_collection`, `search_chunks` e o `store` leem `qdrant_url` e `collection_name` para falar com o Qdrant. `answer_question` lê `openai_api_key`, `llm_model`, `llm_context_tokens` e, se definida, `mcp_http_url` (fluxo em [MCP.md](MCP.md)). `search_chunks` lê `rerank_candidates` para decidir quantos trechos fundidos pedir. `rerank.py` lê `reranker_model`, `embedding_threads` e `model_cache_dir`; `embeddings.py` lê `embedding_threads` e `model_cache_dir`. O trace não grava `qdrant_url`, `mcp_http_url` nem a chave: URL pode carregar segredo e `SecretStr` não serializa. Os nomes e o tamanho do vetor entram em `collection.init.started`; os nomes dos modelos entram em `generate.answered` e `rerank.completed`.
 
 ## O que cada campo faz na coleção
 
@@ -128,6 +129,8 @@ Quem usa o objeto só lê. `ensure_collection` e `_require_compatible` leem `col
 `cache_ttl_s` é o TTL das duas chaves de cache, em segundos. Resposta cacheada pode ficar velha se um PDF for reingerido; o TTL é o limite dessa janela.
 
 `cache_enabled` desliga o cache pela configuração. Com `false`, nem o Redis é consultado. A flag `--no-cache` da CLI faz o mesmo por invocação.
+
+`mcp_http_url` aponta o cliente MCP do `answer` para o servidor Streamable HTTP (ex. `http://127.0.0.1:8000/mcp`). Vazio, o `answer` usa só RAG + LLM. O servidor sobe com `uv run --directory mcp eletric-motor-mcp` ou o serviço `mcp` do `compose.yaml`. Variáveis `MCP_HOST`, `MCP_PORT` etc. configuram o **servidor**, não o CLI — ver [MCP.md](MCP.md).
 
 ## Como acrescentar um campo
 

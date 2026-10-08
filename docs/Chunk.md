@@ -28,7 +28,7 @@ chunk_document               bind_trace: usável sozinha ou dentro da ingestão
 
 ## Modelos
 
-`DocumentProfile` registra os metadados fixos de cada PDF admitido: `source_type` (`manual`, `norma` ou `guia`), `manufacturer`, `language` e `detect_language`. O registro é o dicionário `_DOCUMENTS`, chaveado pelo `document_id`. **Documento fora dessa lista não é ingerido**: `_chunk` para com `SystemExit` orientando a registrar o perfil aqui.
+`DocumentProfile` registra os metadados fixos de cada PDF admitido: `source_type` (`manual`, `norma` ou `guia`), `manufacturer`, `language`, `detect_language` e, para normas, `norm_code` opcional (ex.: `5410` na NBR 5410). O registro é o dicionário `_DOCUMENTS`, chaveado pelo `document_id`. **Documento fora dessa lista não é ingerido**: `_chunk` para com `SystemExit` orientando a registrar o perfil aqui. O `norm_code` do perfil é copiado para cada chunk e indexado no Qdrant.
 
 `Chunk` é o que vira ponto no Qdrant: `document_id`, `document_title`, `section_path`, `page`, `kind` (`prose` ou `table`), `content`, `content_hash` (64 hex), `tokens`, `source_type`, `manufacturer`, `language`, `topic` e `norm_code`. O payload gravado é exatamente esse modelo, e a busca o valida de volta com `Chunk.model_validate`.
 

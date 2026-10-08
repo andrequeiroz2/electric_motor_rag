@@ -57,6 +57,8 @@ class DocumentProfile(BaseModel, frozen=True):
     language: str = Field(min_length=1)
     # True: o idioma é detectado por seção (manual trilíngue); `language` vira o fallback.
     detect_language: bool = False
+    # Normas ABNT: filtro `norm_code` na busca (ex.: 5410).
+    norm_code: str | None = None
 
 
 # Metadados fixos de cada PDF admitido; documento fora desta lista não é ingerido.
@@ -69,6 +71,12 @@ _DOCUMENTS: dict[str, DocumentProfile] = {
     ),
     "weg-w22-catalogo-50025536": DocumentProfile(
         source_type="manual", manufacturer="weg", language="pt-BR"
+    ),
+    "NBR-5410": DocumentProfile(
+        source_type="norma",
+        manufacturer="abnt",
+        language="pt-BR",
+        norm_code="5410",
     ),
 }
 
@@ -235,6 +243,7 @@ def _make_chunk(
         manufacturer=profile.manufacturer,
         language=language,
         topic=_topic_for(section.section_path),
+        norm_code=profile.norm_code,
     )
 
 

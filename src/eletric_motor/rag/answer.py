@@ -23,7 +23,7 @@ from eletric_motor.rag.trace import (
 )
 
 # Incrementar quando o contrato de saída mudar; entra na chave de cache de resposta.
-ANSWER_PROMPT_VERSION = 2
+ANSWER_PROMPT_VERSION = 3
 
 _SYSTEM_PROMPT = (
     "Você responde perguntas sobre motores elétricos usando apenas os trechos "
@@ -90,6 +90,12 @@ def answer_question(
             "Configure OPENAI_API_KEY no ambiente ou no arquivo .env para "
             "gerar respostas."
         )
+    if settings.mcp_http_url:
+        from eletric_motor.rag.mcp_answer import MCP_FORMULA_SET_VERSION
+
+        mcp_part = f"{settings.mcp_http_url}|{MCP_FORMULA_SET_VERSION}"
+    else:
+        mcp_part = ""
     key = cache_key(
         "answer",
         question,
@@ -98,6 +104,7 @@ def answer_question(
         str(rerank),
         settings.llm_model,
         str(ANSWER_PROMPT_VERSION),
+        mcp_part,
     )
     cached = cache_get("answer", key, enabled=use_cache)
     if cached is not None:
@@ -107,7 +114,15 @@ def answer_question(
         result = search_chunks(
             question, filters, limit=limit, rerank=rerank, use_cache=use_cache
         )
-        answer, prompt_hits = _generate(question, result.hits, settings)
+        if settings.mcp_http_url:
+            from eletric_motor.rag.mcp_answer import (
+                MCP_FORMULA_SET_VERSION,
+                generate_with_mcp,
+            )
+
+            answer, prompt_hits = generate_with_mcp(question, result.hits, settings)
+        else:
+            answer, prompt_hits = _generate(question, result.hits, settings)
     except SystemExit:
         raise
     except Exception as exc:

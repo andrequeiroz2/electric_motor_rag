@@ -85,6 +85,8 @@ Campos de contexto definidos hoje:
 | `rerank_candidates` | Trechos fundidos enviados ao reranker, `>= 0` |
 | `cache_scope` | O que o cache guarda: `embedding` ou `answer` |
 | `cache_hit` | `true` se o valor estava no cache |
+| `mcp_tool_count` | Chamadas MCP executadas no `answer` com `MCP_HTTP_URL`, `>= 0` |
+| `mcp_tool_names` | Nomes das tools na ordem das chamadas (pode repetir) |
 | `latency_ms` | Inteiro, milissegundos de `perf_counter` |
 | `error_type` | `type(exc).__name__` |
 | `error_message` | Primeira linha do erro, no máximo 200 caracteres |
@@ -178,6 +180,7 @@ Nome é contrato.
 | `rerank.completed` | Trechos reordenados pelo cross-encoder, com contagens e latência |
 | `rerank.failed` | O rerank falhou |
 | `generate.answered` | Resposta do LLM gerada, com modelo e tamanho |
+| `generate.mcp.tools_called` | Após fluxo MCP no `answer`: contagem e nomes das tools invocadas |
 | `generate.failed` | A chamada ao LLM falhou |
 | `cache.lookup` | Consulta ao cache, com `cache_scope` e `cache_hit` |
 | `cache.unavailable` | Redis inalcançável; warning, uma vez por processo |
@@ -202,6 +205,8 @@ Os dois eventos de uma execução compartilham `trace_id`. Entrada e erro, ou en
 `answer_question` abre o trace com `bind_trace` e chama `search_chunks`. A busca não abre outro trace: `retrieve.hybrid.completed` e o evento da geração saem com o mesmo `trace_id`.
 
 Sem `OPENAI_API_KEY`, a operação para antes de qualquer evento: nenhum `generate.*` sai no stderr e a frase da CLI orienta a configurar a chave.
+
+Sucesso: com `MCP_HTTP_URL`, `generate.mcp.tools_called` (em `mcp_answer`) precede `generate.answered` no mesmo `trace_id`, com `mcp_tool_count`, `mcp_tool_names` e `latency_ms` só da fase MCP+LLM com tools.
 
 Sucesso: `generate.answered` com `span="generate"`, `collection`, `filters`, `fused_hits` (trechos enviados ao LLM), `llm_model`, `answer_chars` e `latency_ms`. O relógio começa na entrada de `answer_question`, antes da busca.
 
